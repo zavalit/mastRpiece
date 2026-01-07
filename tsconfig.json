@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "references": [
+    { "path": "./packages/shared" },
+    { "path": "./services/ingestor" },
+    { "path": "./services/api" }
+  ],
+  "include": ["scripts/**/*.ts"],
+  "exclude": ["node_modules"]
+}
