@@ -1,5 +1,6 @@
 /**
  * @fileoverview Meta endpoint - dataset metadata
+ * GET /v1/meta
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
@@ -52,8 +53,32 @@ async function getMetaHandler(
 }
 
 /**
+ * Meta route schema for OpenAPI
+ */
+const metaSchema = {
+  description: 'Get dataset metadata including last successful import',
+  tags: ['Meta'],
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        dataset: {
+          type: 'object',
+          properties: {
+            last_success_export_date: { type: 'string', nullable: true },
+            last_run_id: { type: 'string', nullable: true },
+            total_units: { type: 'integer' },
+          },
+        },
+        generated_at: { type: 'string', format: 'date-time' },
+      },
+    },
+  },
+};
+
+/**
  * Register meta routes
  */
 export async function registerMetaRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/meta', withCache(getMetaHandler));
+  app.get('/meta', { schema: metaSchema }, withCache(getMetaHandler));
 }

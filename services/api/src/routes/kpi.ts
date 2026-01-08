@@ -1,5 +1,7 @@
 /**
  * @fileoverview KPI endpoints - today and rolling window statistics
+ * GET /v1/kpi/today
+ * GET /v1/kpi/rolling
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
@@ -142,9 +144,71 @@ async function getKpiRollingHandler(
 }
 
 /**
+ * TechKpi schema for OpenAPI
+ */
+const techKpiSchema = {
+  type: 'object',
+  properties: {
+    tech: { type: 'string' },
+    count_units: { type: 'integer' },
+    sum_brutto_kw: { type: 'number' },
+    sum_netto_kw: { type: 'number' },
+  },
+};
+
+/**
+ * KPI today schema
+ */
+const kpiTodaySchema = {
+  description: 'Get daily KPI for a specific day',
+  tags: ['KPI'],
+  querystring: {
+    type: 'object',
+    properties: {
+      day: { type: 'string', description: 'Date in YYYY-MM-DD format' },
+    },
+  },
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        day: { type: 'string' },
+        kpis: { type: 'array', items: techKpiSchema },
+      },
+    },
+  },
+};
+
+/**
+ * KPI rolling schema
+ */
+const kpiRollingSchema = {
+  description: 'Get rolling window KPI statistics',
+  tags: ['KPI'],
+  querystring: {
+    type: 'object',
+    properties: {
+      days: { type: 'integer', default: 7, description: 'Number of days in window' },
+      end: { type: 'string', description: 'End date in YYYY-MM-DD format' },
+    },
+  },
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        start_date: { type: 'string' },
+        end_date: { type: 'string' },
+        days: { type: 'integer' },
+        kpis: { type: 'array', items: techKpiSchema },
+      },
+    },
+  },
+};
+
+/**
  * Register KPI routes
  */
 export async function registerKpiRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/kpi/today', withCache(getKpiTodayHandler));
-  app.get('/kpi/rolling', withCache(getKpiRollingHandler));
+  app.get('/kpi/today', { schema: kpiTodaySchema }, withCache(getKpiTodayHandler));
+  app.get('/kpi/rolling', { schema: kpiRollingSchema }, withCache(getKpiRollingHandler));
 }

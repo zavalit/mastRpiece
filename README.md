@@ -9,12 +9,12 @@ flowchart TB
     subgraph Services
         F["🔄 Fetcher<br/><small>Portal HTML • SHA256 • Atomic Pub</small>"]
         I["📦 Ingestor<br/><small>Stream ZIP • Parse XML • Batch Upserts</small>"]
-        A["🌐 API Service<br/><small>GET /meta • /kpi/* • /rankings/*</small>"]
+        A["🌐 API Service<br/><small>REST API • OpenAPI • Redis Cache</small>"]
     end
 
     subgraph Storage
         AS["📁 Artifact Store<br/><small>/data/artifacts/bulk/latest.json</small>"]
-        PG[("🐘 PostgreSQL 16<br/><small>units • ingest_runs • fetch_runs • agg_*</small>")]
+        PG[("🐘 PostgreSQL 16<br/><small>units • ingest_runs • agg_*</small>")]
         RD[("🔴 Redis 7<br/><small>Response Cache</small>")]
     end
 
@@ -33,33 +33,16 @@ flowchart TB
 
 ## 🚀 Quick Start
 
-### 1. Install Dependencies
-
 ```bash
-pnpm install
+pnpm install           # Install dependencies
+docker compose up -d   # Start PostgreSQL & Redis
+pnpm db:migrate        # Run database migrations
+pnpm demo:generate     # Create demo-data/bulk.zip
+pnpm ingest:demo       # Ingest demo data
+pnpm --filter @energy/api dev  # Start API
 ```
 
-### 2. Start Infrastructure
-
-```bash
-docker compose up -d
-```
-
-### 3. Run Migrations
-
-```bash
-pnpm db:migrate
-```
-
-### 4. Demo with Local Data
-
-```bash
-pnpm demo:generate   # Create demo-data/bulk.zip
-pnpm ingest:demo     # Ingest demo data
-pnpm --filter @energy/api dev
-```
-
-### One-Command Demo
+**One-Command Demo:**
 
 ```bash
 pnpm demo:up
@@ -69,18 +52,7 @@ pnpm demo:up
 
 ## 🔄 Fetcher Service
 
-The **fetcher** automatically downloads bulk ZIP files from the MaStR portal.
-
-### Features
-
-- Parses portal HTML to extract download URL and timestamp
-- Streaming download with SHA256 computation
-- ZIP validation (magic bytes `PK\x03\x04`)
-- Atomic publish (prevents partial reads)
-- PostgreSQL advisory locks (prevents concurrent runs)
-- Deduplication by timestamp and SHA256
-
-### Usage
+Downloads bulk ZIP files from the MaStR portal with streaming download, SHA256 validation, and atomic publish.
 
 ```bash
 npx tsx services/fetcher/src/cli.ts fetch-bulk \
@@ -88,40 +60,15 @@ npx tsx services/fetcher/src/cli.ts fetch-bulk \
   --artifactRoot /data/artifacts
 ```
 
-### Artifact Store Layout
-
-```
-/data/artifacts/bulk/
-  latest.json                              # Points to current dataset
-  datasets/
-    20260107T0500_sha256_9f3a12b4c8d1/
-      bulk.zip                             # Downloaded ZIP
-      manifest.json                        # Metadata
-      READY                                # Completion marker
-```
-
-### Environment Variables
-
-| Variable        | Default              | Description        |
-| --------------- | -------------------- | ------------------ |
-| `PORTAL_URL`    | MaStR Datendownload  | Portal page URL    |
-| `ARTIFACT_ROOT` | `/data/artifacts`    | Root for artifacts |
-| `USER_AGENT`    | `energy-fetcher/1.0` | HTTP User-Agent    |
-
 ---
 
 ## 📥 Ingestor Service
 
-The **ingestor** processes ZIP files and loads data into PostgreSQL.
-
-### Input Options
+Processes ZIP files and loads data into PostgreSQL with streaming XML parsing and batched upserts.
 
 ```bash
-# From artifact store (preferred for production)
+# From artifact store
 npx tsx services/ingestor/src/cli.ts --artifactRoot /data/artifacts
-
-# Direct manifest path
-npx tsx services/ingestor/src/cli.ts --manifestPath /path/to/manifest.json
 
 # Direct ZIP path
 npx tsx services/ingestor/src/cli.ts --bulkPath /path/to/bulk.zip --exportDate 2026-01-07
@@ -138,37 +85,20 @@ npx tsx services/ingestor/src/cli.ts --bulkPath /path/to/bulk.zip --exportDate 2
 
 ---
 
-## 📡 API Endpoints
+## 📡 API Service
 
-### GET /health
-
-```bash
-curl http://localhost:3000/health
-```
-
-### GET /meta
+REST API with OpenAPI documentation and Redis caching.
 
 ```bash
-curl http://localhost:3000/meta
+pnpm --filter @energy/api dev
 ```
 
-### GET /kpi/today
-
-```bash
-curl "http://localhost:3000/kpi/today?day=2026-01-06"
-```
-
-### GET /kpi/rolling
-
-```bash
-curl "http://localhost:3000/kpi/rolling?days=7"
-```
-
-### GET /rankings/bundesland
-
-```bash
-curl "http://localhost:3000/rankings/bundesland?tech=solar&metric=brutto_kw&days=7"
-```
+| Endpoint               | Description   |
+| ---------------------- | ------------- |
+| `GET /.well-known/api` | API discovery |
+| `GET /openapi.json`    | OpenAPI spec  |
+| `GET /docs`            | Swagger UI    |
+| `GET /health`          | Health check  |
 
 ---
 
@@ -187,10 +117,6 @@ pnpm test:integration  # Integration tests (requires Docker)
 .
 ├── docker-compose.yml
 ├── db/migrations/
-│   ├── 001_init.sql
-│   ├── 002_indexes.sql
-│   ├── 003_aggregates.sql
-│   └── 004_fetch_runs.sql
 ├── packages/shared/           # Types and utilities
 ├── services/
 │   ├── fetcher/               # Bulk ZIP downloader

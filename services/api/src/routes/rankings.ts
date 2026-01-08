@@ -1,5 +1,6 @@
 /**
  * @fileoverview Rankings endpoint - top Bundesland by metric
+ * GET /v1/rankings/bundesland
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
@@ -150,8 +151,63 @@ async function getRankingsHandler(
 }
 
 /**
+ * Rankings schema for OpenAPI
+ */
+const rankingsSchema = {
+  description: 'Get Bundesland rankings by metric',
+  tags: ['Rankings'],
+  querystring: {
+    type: 'object',
+    properties: {
+      days: { type: 'integer', default: 7, description: 'Number of days in window' },
+      end: { type: 'string', description: 'End date in YYYY-MM-DD format' },
+      tech: { type: 'string', default: 'solar', description: 'Technology type' },
+      metric: { type: 'string', default: 'brutto_kw', enum: ['brutto_kw', 'netto_kw'] },
+    },
+  },
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        tech: { type: 'string' },
+        metric: { type: 'string' },
+        start_date: { type: 'string' },
+        end_date: { type: 'string' },
+        rankings: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              bundesland_code: { type: 'string' },
+              count_units: { type: 'integer' },
+              sum_brutto_kw: { type: 'number' },
+              sum_netto_kw: { type: 'number' },
+              metric_value: { type: 'number' },
+            },
+          },
+        },
+        total: {
+          type: 'object',
+          properties: {
+            count_units: { type: 'integer' },
+            sum_brutto_kw: { type: 'number' },
+            sum_netto_kw: { type: 'number' },
+          },
+        },
+      },
+    },
+    400: {
+      type: 'object',
+      properties: {
+        error: { type: 'string' },
+      },
+    },
+  },
+};
+
+/**
  * Register rankings routes
  */
 export async function registerRankingsRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/rankings/bundesland', withCache(getRankingsHandler));
+  app.get('/rankings/bundesland', { schema: rankingsSchema }, withCache(getRankingsHandler));
 }
