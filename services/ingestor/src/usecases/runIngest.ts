@@ -13,9 +13,17 @@ import type { IngestStats, ParsedUnit } from '@energy/shared';
 import { chunk } from '@energy/shared';
 
 /**
+ * Resolved config with non-null bulkPath for runIngest
+ */
+export interface ResolvedIngestorConfig extends Omit<IngestorConfig, 'bulkPath'> {
+  bulkPath: string;
+  exportDate: string;
+}
+
+/**
  * Run the complete ingest process
  */
-export async function runIngest(config: IngestorConfig): Promise<IngestStats> {
+export async function runIngest(config: ResolvedIngestorConfig): Promise<IngestStats> {
   const runId = randomUUID();
   const startedAt = new Date();
 

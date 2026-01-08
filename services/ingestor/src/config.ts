@@ -14,7 +14,9 @@ dotenvConfig({ path: resolve(process.cwd(), '.env') });
  * Ingestor configuration
  */
 export interface IngestorConfig {
-  bulkPath: string;
+  bulkPath: string | null;
+  artifactRoot: string | null;
+  manifestPath: string | null;
   exportDate: string;
   fullRebuildAggregates: boolean;
   database: DatabaseConfig;
@@ -43,21 +45,33 @@ export function parseCliArgs(): IngestorConfig {
     .name('energy-ingest')
     .description('Ingest bulk ZIP files into the energy statistics database')
     .version('1.0.0')
-    .requiredOption('--bulkPath <path>', 'Path to the bulk ZIP file')
+    .option('--bulkPath <path>', 'Path to the bulk ZIP file')
+    .option('--artifactRoot <path>', 'Root directory of artifact store (reads latest.json)')
+    .option('--manifestPath <path>', 'Direct path to a manifest.json file')
     .option('--exportDate <date>', 'Export date in YYYY-MM-DD format', formatDateForSql(new Date()))
     .option('--fullRebuildAggregates', 'Rebuild aggregate tables after ingest', true)
     .option('--batchSize <size>', 'Number of records per batch insert', '500')
     .parse();
 
   const opts = program.opts<{
-    bulkPath: string;
+    bulkPath?: string;
+    artifactRoot?: string;
+    manifestPath?: string;
     exportDate: string;
     fullRebuildAggregates: boolean;
     batchSize: string;
   }>();
 
+  // Validate that at least one source is provided
+  if (!opts.bulkPath && !opts.artifactRoot && !opts.manifestPath) {
+    console.error('Error: Must provide one of --bulkPath, --artifactRoot, or --manifestPath');
+    process.exit(1);
+  }
+
   const config: IngestorConfig = {
-    bulkPath: resolve(process.cwd(), opts.bulkPath),
+    bulkPath: opts.bulkPath ? resolve(process.cwd(), opts.bulkPath) : null,
+    artifactRoot: opts.artifactRoot ? resolve(process.cwd(), opts.artifactRoot) : null,
+    manifestPath: opts.manifestPath ? resolve(process.cwd(), opts.manifestPath) : null,
     exportDate: opts.exportDate,
     fullRebuildAggregates: opts.fullRebuildAggregates,
     batchSize: parseInt(opts.batchSize, 10),

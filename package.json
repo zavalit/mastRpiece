@@ -24,8 +24,9 @@
     "demo:up": "docker compose up -d && pnpm db:migrate && pnpm demo:generate && pnpm ingest:demo && pnpm --filter @energy/api dev"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
     "@types/archiver": "^6.0.0",
+    "@types/node": "^20.11.0",
+    "@types/pg": "^8.11.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
     "eslint": "^8.57.0",

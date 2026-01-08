@@ -217,3 +217,64 @@ export const FILE_TECH_MAPPING: Record<string, TechType> = {
   EinheitenWasser: 'hydro',
   EinheitenSpeicher: 'storage',
 } as const;
+
+// ============================================
+// Fetcher Service Types
+// ============================================
+
+/**
+ * Fetch run status
+ */
+export type FetchStatus = 'running' | 'success' | 'failed' | 'skipped';
+
+/**
+ * Metadata for a fetch run
+ */
+export interface FetchRun {
+  run_id: string;
+  started_at: Date;
+  finished_at: Date | null;
+  status: FetchStatus;
+  portal_last_updated_label: string | null;
+  portal_last_updated_at: Date | null;
+  download_url: string | null;
+  sha256: string | null;
+  bytes: number | null;
+  dataset_id: string | null;
+  artifact_path: string | null;
+  error_message: string | null;
+  attempts: number;
+}
+
+/**
+ * Dataset manifest (manifest.json)
+ */
+export interface DatasetManifest {
+  dataset_id: string;
+  kind: 'bulk';
+  portal_url: string;
+  download_url: string;
+  portal_last_updated_label: string;
+  portal_last_updated_at: string | null;
+  fetched_at: string;
+  sha256: string;
+  bytes: number;
+  http: {
+    status: number;
+    etag: string | null;
+    last_modified: string | null;
+    content_type: string | null;
+  };
+  local: {
+    zip_path: string;
+  };
+}
+
+/**
+ * Latest pointer (latest.json)
+ */
+export interface LatestPointer {
+  dataset_id: string;
+  manifest_path: string;
+  updated_at: string;
+}
