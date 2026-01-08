@@ -1,5 +1,6 @@
 /**
  * @fileoverview Generate deterministic demo data for testing
+ * Includes: Storage, Solar, and Netzanschlusspunkte XMLs
  */
 
 import { createWriteStream } from 'node:fs';
@@ -11,11 +12,12 @@ import archiver from 'archiver';
 const SEED = 42;
 
 // Demo configuration
+const STORAGE_COUNT = 100;
 const SOLAR_COUNT = 200;
-const WIND_COUNT = 50;
+const LOCATION_COUNT = 150;  // Shared locations for colocation testing
 const START_DATE = new Date('2025-12-01');
 const END_DATE = new Date('2026-01-06');
-const DECOMMISSION_RATE = 0.05; // 5% decommissioned
+const COLOCATION_RATE = 0.4; // 40% of storages are colocated with solar
 
 // German Bundesland codes
 const BUNDESLAND_CODES = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16'];
@@ -39,6 +41,9 @@ const BUNDESLAND_PLZ: Record<string, string[]> = {
   '15': ['39104', '39106', '39108', '39110', '39112'],
   '16': ['99084', '99086', '99089', '99091', '99094'],
 };
+
+// DSO/Netzbetreiber IDs
+const NETZBETREIBER_IDS = ['SNB000001', 'SNB000002', 'SNB000003', 'SNB000004', 'SNB000005'];
 
 // Simple seeded random number generator
 class SeededRandom {
@@ -76,34 +81,83 @@ function formatDate(date: Date): string {
   return date.toISOString().split('T')[0]!;
 }
 
-function generateSolarXml(rng: SeededRandom): string {
+// Generate location IDs that can be shared between solar and storage
+function generateLocationIds(count: number): string[] {
+  return Array.from({ length: count }, (_, i) => `SEL${String(i + 1).padStart(8, '0')}`);
+}
+
+function generateStorageXml(rng: SeededRandom, locationIds: string[]): string {
   const records: string[] = [];
 
-  for (let i = 1; i <= SOLAR_COUNT; i++) {
-    const unitId = `SEE${String(i).padStart(4, '0')}`;
+  for (let i = 1; i <= STORAGE_COUNT; i++) {
+    const unitId = `SES${String(i).padStart(8, '0')}`;
     const bundesland = rng.pick(BUNDESLAND_CODES);
     const plzList = BUNDESLAND_PLZ[bundesland] ?? ['00000'];
     const plz = rng.pick(plzList);
     const ags = `${bundesland}${String(rng.nextInt(100, 999))}${String(rng.nextInt(100, 999))}`;
     const commissioningDate = formatDate(rng.nextDate(START_DATE, END_DATE));
-    const bruttoKw = rng.nextFloat(5, 500).toFixed(2);
-    const nettoKw = (parseFloat(bruttoKw) * rng.nextFloat(0.9, 0.98)).toFixed(2);
+    
+    // Registration date is 1-30 days after commissioning
+    const commDate = new Date(commissioningDate);
+    const regOffset = rng.nextInt(1, 30);
+    const registrationDate = new Date(commDate.getTime() + regOffset * 24 * 60 * 60 * 1000);
+    
+    const nettoKw = rng.nextFloat(5, 100).toFixed(2);
+    const inverterKw = (parseFloat(nettoKw) * rng.nextFloat(1.0, 1.2)).toFixed(2);
 
-    // Decide if decommissioned
-    const isDecommissioned = rng.next() < DECOMMISSION_RATE;
-    const decommissioningDate = isDecommissioned
-      ? formatDate(rng.nextDate(new Date(commissioningDate), END_DATE))
-      : '';
+    // Decide if colocated (uses a shared location)
+    const isColocated = rng.next() < COLOCATION_RATE;
+    const locationId = isColocated ? rng.pick(locationIds) : `SEL${String(1000000 + i).padStart(8, '0')}`;
+
+    records.push(`  <EinheitStromSpeicher>
+    <EinheitMastrNummer>${unitId}</EinheitMastrNummer>
+    <LokationMaStRNummer>${locationId}</LokationMaStRNummer>
+    <Inbetriebnahmedatum>${commissioningDate}</Inbetriebnahmedatum>
+    <Registrierungsdatum>${formatDate(registrationDate)}</Registrierungsdatum>
+    <Nettonennleistung>${nettoKw}</Nettonennleistung>
+    <ZugeordnenteWirkleistungWechselrichter>${inverterKw}</ZugeordnenteWirkleistungWechselrichter>
+    <Postleitzahl>${plz}</Postleitzahl>
+    <Gemeindeschluessel>${ags}</Gemeindeschluessel>
+  </EinheitStromSpeicher>`);
+  }
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<EinheitenStromSpeicher>
+${records.join('\n')}
+</EinheitenStromSpeicher>`;
+}
+
+function generateSolarXml(rng: SeededRandom, locationIds: string[]): string {
+  const records: string[] = [];
+
+  for (let i = 1; i <= SOLAR_COUNT; i++) {
+    const unitId = `SEE${String(i).padStart(8, '0')}`;
+    const bundesland = rng.pick(BUNDESLAND_CODES);
+    const plzList = BUNDESLAND_PLZ[bundesland] ?? ['00000'];
+    const plz = rng.pick(plzList);
+    const ags = `${bundesland}${String(rng.nextInt(100, 999))}${String(rng.nextInt(100, 999))}`;
+    const commissioningDate = formatDate(rng.nextDate(START_DATE, END_DATE));
+    
+    // Registration date is 1-30 days after commissioning
+    const commDate = new Date(commissioningDate);
+    const regOffset = rng.nextInt(1, 30);
+    const registrationDate = new Date(commDate.getTime() + regOffset * 24 * 60 * 60 * 1000);
+    
+    const nettoKw = rng.nextFloat(5, 500).toFixed(2);
+
+    // First N solar units use shared locations (for colocation)
+    const locationId = i <= locationIds.length 
+      ? locationIds[i - 1]! 
+      : `SEL${String(2000000 + i).padStart(8, '0')}`;
 
     records.push(`  <EinheitSolar>
     <EinheitMastrNummer>${unitId}</EinheitMastrNummer>
+    <LokationMaStRNummer>${locationId}</LokationMaStRNummer>
     <Inbetriebnahmedatum>${commissioningDate}</Inbetriebnahmedatum>
-    <Bruttoleistung>${bruttoKw}</Bruttoleistung>
+    <Registrierungsdatum>${formatDate(registrationDate)}</Registrierungsdatum>
     <Nettonennleistung>${nettoKw}</Nettonennleistung>
-    <Bundesland>${bundesland}</Bundesland>
     <Postleitzahl>${plz}</Postleitzahl>
     <Gemeindeschluessel>${ags}</Gemeindeschluessel>
-    <DatumEndgueltigeStilllegung>${decommissioningDate}</DatumEndgueltigeStilllegung>
   </EinheitSolar>`);
   }
 
@@ -113,41 +167,30 @@ ${records.join('\n')}
 </EinheitenSolar>`;
 }
 
-function generateWindXml(rng: SeededRandom): string {
+function generateNetzanschlusspunkteXml(rng: SeededRandom, locationIds: string[]): string {
   const records: string[] = [];
+  let napIndex = 1;
 
-  for (let i = 1; i <= WIND_COUNT; i++) {
-    const unitId = `SEE${String(SOLAR_COUNT + i).padStart(4, '0')}`;
-    const bundesland = rng.pick(BUNDESLAND_CODES);
-    const plzList = BUNDESLAND_PLZ[bundesland] ?? ['00000'];
-    const plz = rng.pick(plzList);
-    const ags = `${bundesland}${String(rng.nextInt(100, 999))}${String(rng.nextInt(100, 999))}`;
-    const commissioningDate = formatDate(rng.nextDate(START_DATE, END_DATE));
-    const bruttoKw = rng.nextFloat(1000, 5000).toFixed(2);
-    const nettoKw = (parseFloat(bruttoKw) * rng.nextFloat(0.9, 0.98)).toFixed(2);
+  // Create connection points for shared locations
+  for (const locationId of locationIds) {
+    const napId = `NAP${String(napIndex++).padStart(8, '0')}`;
+    const netzbetreiber = rng.pick(NETZBETREIBER_IDS);
+    const nochInPlanung = rng.next() < 0.1 ? '1' : '0';
+    const lastChange = formatDate(rng.nextDate(START_DATE, END_DATE));
 
-    // Decide if decommissioned
-    const isDecommissioned = rng.next() < DECOMMISSION_RATE;
-    const decommissioningDate = isDecommissioned
-      ? formatDate(rng.nextDate(new Date(commissioningDate), END_DATE))
-      : '';
-
-    records.push(`  <EinheitWind>
-    <EinheitMastrNummer>${unitId}</EinheitMastrNummer>
-    <Inbetriebnahmedatum>${commissioningDate}</Inbetriebnahmedatum>
-    <Bruttoleistung>${bruttoKw}</Bruttoleistung>
-    <Nettonennleistung>${nettoKw}</Nettonennleistung>
-    <Bundesland>${bundesland}</Bundesland>
-    <Postleitzahl>${plz}</Postleitzahl>
-    <Gemeindeschluessel>${ags}</Gemeindeschluessel>
-    <DatumEndgueltigeStilllegung>${decommissioningDate}</DatumEndgueltigeStilllegung>
-  </EinheitWind>`);
+    records.push(`  <Netzanschlusspunkt>
+    <NetzanschlusspunktMaStRNummer>${napId}</NetzanschlusspunktMaStRNummer>
+    <LokationMaStRNummer>${locationId}</LokationMaStRNummer>
+    <NetzbetreiberMaStRNummer>${netzbetreiber}</NetzbetreiberMaStRNummer>
+    <NochInPlanung>${nochInPlanung}</NochInPlanung>
+    <LetzteAenderung>${lastChange}</LetzteAenderung>
+  </Netzanschlusspunkt>`);
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<EinheitenWind>
+<Netzanschlusspunkte>
 ${records.join('\n')}
-</EinheitenWind>`;
+</Netzanschlusspunkte>`;
 }
 
 async function main(): Promise<void> {
@@ -159,9 +202,13 @@ async function main(): Promise<void> {
   // Ensure directory exists
   await mkdir(dirname(outputPath), { recursive: true });
 
+  // Generate shared location IDs
+  const locationIds = generateLocationIds(LOCATION_COUNT);
+
   // Generate XML content
-  const solarXml = generateSolarXml(rng);
-  const windXml = generateWindXml(rng);
+  const storageXml = generateStorageXml(rng, locationIds);
+  const solarXml = generateSolarXml(rng, locationIds);
+  const napXml = generateNetzanschlusspunkteXml(rng, locationIds);
 
   // Create ZIP archive
   const output = createWriteStream(outputPath);
@@ -175,8 +222,9 @@ async function main(): Promise<void> {
   archive.pipe(output);
 
   // Add XML files to archive
+  archive.append(storageXml, { name: 'EinheitenStromSpeicher.xml' });
   archive.append(solarXml, { name: 'EinheitenSolar.xml' });
-  archive.append(windXml, { name: 'EinheitenWind.xml' });
+  archive.append(napXml, { name: 'Netzanschlusspunkte.xml' });
 
   await archive.finalize();
   await finished;
@@ -184,10 +232,11 @@ async function main(): Promise<void> {
   const bytes = archive.pointer();
   console.log(`✓ Generated ${outputPath}`);
   console.log(`  Size: ${(bytes / 1024).toFixed(2)} KB`);
+  console.log(`  Storage units: ${STORAGE_COUNT}`);
   console.log(`  Solar units: ${SOLAR_COUNT}`);
-  console.log(`  Wind units: ${WIND_COUNT}`);
+  console.log(`  Shared locations: ${LOCATION_COUNT}`);
+  console.log(`  Colocation rate: ${(COLOCATION_RATE * 100).toFixed(0)}%`);
   console.log(`  Date range: ${formatDate(START_DATE)} to ${formatDate(END_DATE)}`);
-  console.log(`  Decommission rate: ${(DECOMMISSION_RATE * 100).toFixed(0)}%`);
 }
 
 main().catch((err) => {

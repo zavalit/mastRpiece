@@ -1,5 +1,6 @@
 /**
  * @fileoverview Fastify server entry point with API discovery and OpenAPI
+ * Refactored for story-first architecture
  */
 
 import Fastify from 'fastify';
@@ -11,10 +12,7 @@ import { resolve } from 'node:path';
 import { initPool, closePool } from './infra/db.js';
 import { initRedis, closeRedis } from './infra/redis.js';
 import { registerDiscoveryRoutes } from './routes/discovery.js';
-import { registerMetaRoutes } from './routes/meta.js';
-import { registerKpiRoutes } from './routes/kpi.js';
-import { registerRankingsRoutes } from './routes/rankings.js';
-import { registerCapabilitiesRoutes } from './routes/capabilities.js';
+import { registerStoryRoutes } from './routes/stories.js';
 
 // Load environment variables
 dotenvConfig({ path: resolve(process.cwd(), '.env') });
@@ -57,8 +55,8 @@ export async function buildApp() {
     openapi: {
       info: {
         title: 'Energy Statistics API',
-        description: 'API for German energy unit statistics',
-        version: '1.0.0',
+        description: 'Story-first API for German energy unit statistics',
+        version: '2.0.0',
       },
       servers: [
         {
@@ -68,9 +66,7 @@ export async function buildApp() {
       ],
       tags: [
         { name: 'Meta', description: 'Dataset metadata' },
-        { name: 'KPI', description: 'Key performance indicators' },
-        { name: 'Rankings', description: 'Bundesland rankings' },
-        { name: 'Capabilities', description: 'API capabilities' },
+        { name: 'Stories', description: 'Story-first data endpoints' },
         { name: 'Discovery', description: 'API discovery' },
       ],
     },
@@ -99,11 +95,8 @@ export async function buildApp() {
   // Discovery endpoint
   await registerDiscoveryRoutes(app);
 
-  // All routes at root level
-  await registerMetaRoutes(app);
-  await registerKpiRoutes(app);
-  await registerRankingsRoutes(app);
-  await registerCapabilitiesRoutes(app);
+  // Story routes (replaces old KPI/rankings routes)
+  await registerStoryRoutes(app);
 
   return app;
 }
@@ -136,7 +129,7 @@ async function start(): Promise<void> {
     console.info(`
 ╔════════════════════════════════════════════════════════════╗
 ║                                                            ║
-║   🚀 Energy Statistics API is running!                     ║
+║   🚀 Energy Statistics API (Story-First)                   ║
 ║                                                            ║
 ║   Local:   http://localhost:${PORT}                          ║
 ║                                                            ║
@@ -145,13 +138,13 @@ async function start(): Promise<void> {
 ║     GET /openapi.json        - OpenAPI spec                ║
 ║     GET /docs                - Swagger UI                  ║
 ║                                                            ║
-║   Endpoints:                                               ║
+║   Story Endpoints:                                         ║
 ║     GET /health              - Health check                ║
-║     GET /meta                - Dataset metadata            ║
-║     GET /kpi/today           - Daily KPI                   ║
-║     GET /kpi/rolling         - Rolling window KPI          ║
-║     GET /rankings/bundesland - Bundesland rankings         ║
-║     GET /capabilities        - API capabilities            ║
+║     GET /meta                - Latest ingest run info      ║
+║     GET /stories/storage/wave       - Storage wave         ║
+║     GET /stories/solar/wave         - Solar wave           ║
+║     GET /stories/storage/colocation - Colocation stats     ║
+║     GET /stories/lag                - Registration lag     ║
 ║                                                            ║
 ║   Press Ctrl+C to stop                                     ║
 ║                                                            ║

@@ -1,6 +1,17 @@
 # Energy-Unit Statistics Platform
 
-A production-grade MVP for tracking and analyzing energy unit statistics in Germany. This platform automatically downloads bulk XML data exports from the MaStR portal, processes them, stores the data in a normalized database, and exposes aggregated statistics via a read-only REST API.
+A **story-first** energy statistics platform based on nightly bulk ZIP/XML imports. This is a data-mart approach optimized for storytelling pages and viral dashboards.
+
+## 🎯 Philosophy
+
+**No large canonical layer for all objects.** Instead:
+
+- Keep only **minimal core tables** (run metadata + location lookups)
+- Build **story tables** directly from XML parsing, one story at a time
+- Nightly job does **full rebuild**: `TRUNCATE story tables → parse XML → INSERT aggregated rows`
+- The API reads **only story tables** (fast, simple, stable)
+
+---
 
 ## 🏗️ Architecture
 
@@ -8,28 +19,32 @@ A production-grade MVP for tracking and analyzing energy unit statistics in Germ
 flowchart TB
     subgraph Services
         F["🔄 Fetcher<br/><small>Portal HTML • SHA256 • Atomic Pub</small>"]
-        I["📦 Ingestor<br/><small>Stream ZIP • Parse XML • Batch Upserts</small>"]
-        A["🌐 API Service<br/><small>REST API • OpenAPI • Redis Cache</small>"]
+        B["📦 Builder<br/><small>Stream ZIP • Parse XML • Story Tables</small>"]
+        A["🌐 API Service<br/><small>REST API • Redis Cache</small>"]
     end
 
     subgraph Storage
-        AS["📁 Artifact Store<br/><small>/data/artifacts/bulk/latest.json</small>"]
-        PG[("🐘 PostgreSQL 16<br/><small>units • ingest_runs • agg_*</small>")]
+        AS["📁 Artifact Store<br/><small>/data/artifacts/bulk/</small>"]
+        PG[("🐘 PostgreSQL 16<br/><small>ingest_run • story_*</small>")]
         RD[("🔴 Redis 7<br/><small>Response Cache</small>")]
     end
 
-    F -->|"bulk.zip + manifest"| AS
-    AS -->|"--artifactRoot"| I
-    I -->|"INSERT/UPDATE"| PG
+    F -->|"bulk.zip"| AS
+    AS -->|"--bulkPath"| B
+    B -->|"TRUNCATE + INSERT"| PG
     A -->|"SELECT"| PG
     A <-->|"cache"| RD
 ```
+
+---
 
 ## 📋 Prerequisites
 
 - **Docker** (with Docker Compose)
 - **Node.js** >= 20.0.0
 - **pnpm** >= 9.0.0
+
+---
 
 ## 🚀 Quick Start
 
@@ -38,7 +53,7 @@ pnpm install           # Install dependencies
 docker compose up -d   # Start PostgreSQL & Redis
 pnpm db:migrate        # Run database migrations
 pnpm demo:generate     # Create demo-data/bulk.zip
-pnpm ingest:demo       # Ingest demo data
+pnpm builder:demo      # Build story tables from demo data
 pnpm --filter @energy/api dev  # Start API
 ```
 
@@ -48,85 +63,102 @@ pnpm --filter @energy/api dev  # Start API
 pnpm demo:up
 ```
 
+This will:
+
+1. Start PostgreSQL + Redis
+2. Apply migrations (core + story tables)
+3. Generate demo bulk.zip (100 storage + 200 solar units)
+4. Build story tables
+5. Start the API
+
 ---
 
-## 🔄 Fetcher Service
+## 📊 Story Tables (the product)
 
-Downloads bulk ZIP files from the MaStR portal with streaming download, SHA256 validation, and atomic publish.
+| Story                | Table                            | Description                                     |
+| -------------------- | -------------------------------- | ----------------------------------------------- |
+| **Storage Wave**     | `story_storage_day_region`       | Daily storage additions by bundesland           |
+| **Solar Wave**       | `story_solar_day_region`         | Daily solar additions by bundesland             |
+| **Colocation**       | `story_storage_colocation_month` | Storage-solar co-location rates                 |
+| **Registration Lag** | `story_registration_lag_month`   | P50/P90 lag days (commissioning → registration) |
+
+---
+
+## 📦 Builder Service
+
+Parses ZIP/XML and populates story tables with a **full rebuild** approach.
 
 ```bash
-npx tsx services/fetcher/src/cli.ts fetch-bulk \
-  --portalUrl https://www.marktstammdatenregister.de/MaStR/Datendownload \
-  --artifactRoot /data/artifacts
+# Run builder on demo data
+pnpm builder:demo
+
+# Run builder with custom path
+tsx services/builder/src/cli.ts \
+  --bulkPath /path/to/bulk.zip \
+  --exportDate 2026-01-08 \
+  --stories storageWave,solarWave
 ```
+
+### Supported XML Files
+
+| Pattern                       | Content                            |
+| ----------------------------- | ---------------------------------- |
+| `EinheitenStromSpeicher*.xml` | Storage units                      |
+| `EinheitenSolar*.xml`         | Solar units                        |
+| `Netzanschlusspunkte*.xml`    | Connection points (for DSO lookup) |
 
 ---
 
-## 📥 Ingestor Service
+## 📡 API Endpoints
 
-Processes ZIP files and loads data into PostgreSQL with streaming XML parsing and batched upserts.
+| Endpoint                                                     | Description                |
+| ------------------------------------------------------------ | -------------------------- |
+| `GET /health`                                                | Health check               |
+| `GET /meta`                                                  | Latest ingest_run info     |
+| `GET /stories/storage/wave?start=&end=`                      | Storage wave by day+region |
+| `GET /stories/solar/wave?start=&end=`                        | Solar wave by day+region   |
+| `GET /stories/storage/colocation?startMonth=&endMonth=`      | Co-location stats          |
+| `GET /stories/lag?tech=storage\|solar&startMonth=&endMonth=` | Registration lag           |
 
-```bash
-# From artifact store
-npx tsx services/ingestor/src/cli.ts --artifactRoot /data/artifacts
-
-# Direct ZIP path
-npx tsx services/ingestor/src/cli.ts --bulkPath /path/to/bulk.zip --exportDate 2026-01-07
-```
-
-### Features
-
-- Streaming ZIP/XML processing (memory efficient)
-- UTF-8 and UTF-16 support
-- Split file handling (`_1.xml`, `_2.xml`)
-- Batched upserts (500 records)
-- Stable SHA256 hashing for change detection
-- Aggregate table rebuilding
+All endpoints are cached in Redis with `x-cache: hit|miss` header.
 
 ---
 
-## 📡 API Service
+## 🧩 Adding a New Story
 
-REST API with OpenAPI documentation and Redis caching.
+1. **Create the story table** in `db/migrations/`:
 
-```bash
-pnpm --filter @energy/api dev
-```
+   ```sql
+   CREATE TABLE IF NOT EXISTS story_my_story (
+     export_date DATE NOT NULL,
+     ...
+     PRIMARY KEY (export_date, ...)
+   );
+   ```
 
-| Endpoint               | Description   |
-| ---------------------- | ------------- |
-| `GET /.well-known/api` | API discovery |
-| `GET /openapi.json`    | OpenAPI spec  |
-| `GET /docs`            | Swagger UI    |
-| `GET /health`          | Health check  |
+2. **Create the builder** in `services/builder/src/stories/myStory.ts`:
 
----
+   ```typescript
+   export function createMyStoryBuilder(): StoryBuilder<RecordType> {
+     return {
+       name: 'myStory',
+       filePatterns: [/^EinheitenXXX.*\.xml$/i],
+       onRecord(record) {
+         /* aggregate */
+       },
+       finalizeAndWrite(pool, exportDate) {
+         /* bulk insert */
+       },
+       reset() {
+         /* clear state */
+       },
+     };
+   }
+   ```
 
-## 🧪 Testing
+3. **Register in pipeline.ts** (add to builder initialization and story writing)
 
-```bash
-pnpm test              # 33 unit tests
-pnpm test:integration  # Integration tests (requires Docker)
-```
-
----
-
-## 📁 Project Structure
-
-```
-.
-├── docker-compose.yml
-├── db/migrations/
-├── packages/shared/           # Types and utilities
-├── services/
-│   ├── fetcher/               # Bulk ZIP downloader
-│   ├── ingestor/              # XML processor
-│   └── api/                   # REST API
-├── scripts/
-│   ├── migrate.ts
-│   └── generateDemo.ts
-└── test/integration/
-```
+4. **Add API endpoint** in `services/api/src/routes/stories.ts`
 
 ---
 
@@ -142,29 +174,32 @@ pnpm test:integration  # Integration tests (requires Docker)
 | `REDIS_URL`         | `redis://localhost:6379` | Redis URL           |
 | `API_PORT`          | `3000`                   | API port            |
 | `CACHE_TTL`         | `300`                    | Cache TTL (seconds) |
-| `PORTAL_URL`        | MaStR URL                | Fetcher portal URL  |
-| `ARTIFACT_ROOT`     | `/data/artifacts`        | Artifact store root |
+
+---
+
+## 🧪 Testing
+
+```bash
+pnpm test              # Unit tests
+pnpm test:integration  # Integration tests (requires Docker)
+```
 
 ---
 
 ## 📈 Production Flow
 
-1. **Fetcher** runs daily (cron or scheduler)
+1. **Fetcher** runs daily (cron)
    - Downloads new bulk ZIP from MaStR portal
-   - Publishes to `/data/artifacts/bulk/`
-2. **Ingestor** runs after fetcher
-   - Reads from `--artifactRoot`
-   - Verifies SHA256, loads `latest.json`
-   - Processes ZIP, updates database
-3. **API** serves aggregated statistics
-   - Reads from PostgreSQL
-   - Caches responses in Redis
+   - Publishes to artifact store
 
-```bash
-# Example production workflow
-npx tsx services/fetcher/src/cli.ts fetch-bulk --artifactRoot /data/artifacts
-npx tsx services/ingestor/src/cli.ts --artifactRoot /data/artifacts
-```
+2. **Builder** runs after fetcher
+   - Reads bulk.zip with `--bulkPath`
+   - TRUNCATE + INSERT story tables
+   - Marks ingest_run as success/failed
+
+3. **API** serves story data
+   - Reads from story tables
+   - Caches responses in Redis (TTL 5 min)
 
 ---
 

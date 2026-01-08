@@ -58,6 +58,14 @@ async function applyMigration(
   try {
     await client.query('BEGIN');
 
+    // Ensure schema_migrations table exists
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version TEXT PRIMARY KEY,
+        applied_at TIMESTAMPTZ DEFAULT now()
+      )
+    `);
+
     // Execute the migration SQL
     await client.query(migration.sql);
 

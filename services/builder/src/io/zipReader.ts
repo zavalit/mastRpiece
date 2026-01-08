@@ -7,14 +7,12 @@ import { createHash } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import unzipper from 'unzipper';
 import type { Readable } from 'node:stream';
-import { inferTechFromFilename, type TechType } from '@energy/shared';
 
 /**
- * Entry from the ZIP file
+ * ZIP entry metadata
  */
 export interface ZipEntry {
   filename: string;
-  tech: TechType;
   stream: Readable;
 }
 
@@ -71,24 +69,9 @@ export async function* streamZipEntries(filePath: string): AsyncGenerator<ZipEnt
     // Extract just the filename without path
     const basename = filename.split('/').pop() ?? filename;
 
-    // Infer tech type from filename
-    const tech = inferTechFromFilename(basename);
-
     yield {
       filename: basename,
-      tech,
       stream: entry as Readable,
     };
   }
-}
-
-/**
- * Group split files by base name
- * e.g., EinheitenSolar_1.xml and EinheitenSolar_2.xml are grouped together
- */
-export function getBaseFilename(filename: string): string {
-  // Remove _N suffix before extension (e.g., EinheitenSolar_1.xml -> EinheitenSolar)
-  const withoutExt = filename.replace(/\.xml$/i, '');
-  const withoutSuffix = withoutExt.replace(/_\d+$/, '');
-  return withoutSuffix;
 }

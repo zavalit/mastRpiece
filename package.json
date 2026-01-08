@@ -20,8 +20,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "db:migrate": "tsx scripts/migrate.ts",
     "demo:generate": "tsx scripts/generateDemo.ts",
-    "ingest:demo": "npx tsx services/ingestor/src/cli.ts --bulkPath ./demo-data/bulk.zip --exportDate 2026-01-06",
-    "demo:up": "docker compose up -d && pnpm db:migrate && pnpm demo:generate && pnpm ingest:demo && pnpm --filter @energy/api dev"
+    "builder:demo": "tsx services/builder/src/cli.ts --bulkPath ./demo-data/bulk.zip --exportDate 2026-01-08",
+    "demo:up": "docker compose up -d && pnpm db:migrate && pnpm demo:generate && pnpm builder:demo && pnpm --filter @energy/api dev"
   },
   "devDependencies": {
     "@types/archiver": "^6.0.0",
