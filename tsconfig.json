@@ -5,7 +5,8 @@
   },
   "references": [
     { "path": "./packages/shared" },
-    { "path": "./services/ingestor" },
+    { "path": "./services/fetcher" },
+    { "path": "./services/builder" },
     { "path": "./services/api" }
   ],
   "include": ["scripts/**/*.ts"],

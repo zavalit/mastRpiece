@@ -203,8 +203,10 @@ All endpoints are cached in Redis with `x-cache: hit|miss` header.
 ## 🧪 Testing
 
 ```bash
-pnpm test              # Unit tests
-pnpm test:integration  # Integration tests (requires Docker)
+pnpm test              # Run all tests (unit + integration)
+pnpm test:unit         # Run only unit tests (fast)
+pnpm test:integration  # Run integration tests (requires Docker)
+pnpm test:watch        # Watch mode for unit tests
 ```
 
 ---

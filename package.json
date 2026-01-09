@@ -10,9 +10,10 @@
   "scripts": {
     "dev": "docker compose up -d && pnpm --filter @energy/api dev",
     "build": "pnpm -r build",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test": "pnpm -r test",
+    "test:unit": "pnpm -r test:unit",
+    "test:watch": "pnpm -r test:unit --watch",
+    "test:integration": "pnpm -r test:integration",
     "lint": "eslint . --ext .ts",
     "lint:fix": "eslint . --ext .ts --fix",
     "format": "prettier --write .",
@@ -25,6 +26,7 @@
     "bulk:schema": "tsx scripts/extract-schema.ts data/artifacts/bulk/datasets/bulk.zip"
   },
   "devDependencies": {
+    "@testcontainers/postgresql": "^11.11.0",
     "@types/archiver": "^6.0.0",
     "@types/node": "^20.11.0",
     "@types/pg": "^8.11.0",
