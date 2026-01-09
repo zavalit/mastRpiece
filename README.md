@@ -84,6 +84,29 @@ This will:
 
 ---
 
+## 🔄 Fetcher Service
+
+Downloads bulk ZIP files from the MaStR portal and publishes them to the artifact store.
+
+```bash
+# Run fetcher with local storage
+pnpm --filter @energy/fetcher fetch fetch-bulk --artifactRoot ./data/artifacts
+
+# Run fetcher for a specific portal URL (optional)
+npx tsx services/fetcher/src/cli.ts fetch-bulk \
+  --portalUrl https://... \
+  --artifactRoot ./data/artifacts
+```
+
+### Key Features
+
+- **Advisory Locking**: Prevents multiple fetch processes from running simultaneously.
+- **Atomic Publishing**: Uses a `READY` marker and directory swaps to ensure data integrity.
+- **Deduplication**: Skips download if the portal hasn't been updated or if SHA256 matches.
+- **History**: Tracks all fetch attempts in the `fetch_runs` database table.
+
+---
+
 ## 📦 Builder Service
 
 Parses ZIP/XML and populates story tables with a **full rebuild** approach.
