@@ -21,21 +21,26 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "demo:generate": "tsx scripts/generateDemo.ts",
     "builder:demo": "tsx services/builder/src/cli.ts --bulkPath ./demo-data/bulk.zip --exportDate 2026-01-08",
-    "demo:up": "docker compose up -d && pnpm db:migrate && pnpm demo:generate && pnpm builder:demo && pnpm --filter @energy/api dev"
+    "demo:up": "docker compose up -d && pnpm db:migrate && pnpm demo:generate && pnpm builder:demo && pnpm --filter @energy/api dev",
+    "bulk:schema": "tsx scripts/extract-schema.ts data/artifacts/bulk/datasets/bulk.zip"
   },
   "devDependencies": {
     "@types/archiver": "^6.0.0",
     "@types/node": "^20.11.0",
     "@types/pg": "^8.11.0",
+    "@types/sax": "^1.2.7",
+    "@types/yauzl": "^2.10.3",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
     "eslint": "^8.57.0",
     "pino-pretty": "^10.3.0",
     "prettier": "^3.2.0",
+    "sax": "^1.4.1",
     "testcontainers": "^10.6.0",
     "tsx": "^4.7.0",
     "typescript": "^5.3.0",
-    "vitest": "^1.2.0"
+    "vitest": "^1.2.0",
+    "yauzl": "^3.2.0"
   },
   "dependencies": {
     "archiver": "^7.0.0",
