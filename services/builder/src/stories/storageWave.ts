@@ -37,7 +37,7 @@ export function createStorageWaveBuilder(): StoryBuilder<StorageRecord> {
       const day = parseDate(record.Inbetriebnahmedatum);
       if (!day) return; // Skip records without commissioning date
 
-      const bundesland_ags = extractBundeslandAgs(record.Gemeindeschluessel) ?? 'NULL';
+      const bundesland_ags = extractBundeslandAgs(record.Gemeindeschluessel) ?? '99';
       const netto_kw = parseNumber(record.Nettonennleistung) ?? 0;
       const inverter_kw = parseNumber(record.ZugeordnenteWirkleistungWechselrichter) ?? 0;
 
@@ -67,7 +67,7 @@ export function createStorageWaveBuilder(): StoryBuilder<StorageRecord> {
         return {
           export_date: exportDate,
           day,
-          bundesland_ags: bundesland_ags === 'NULL' ? null : bundesland_ags,
+          bundesland_ags,
           count_units: value.count,
           sum_netto_kw: value.sum_netto_kw,
           sum_inverter_kw: value.sum_inverter_kw,

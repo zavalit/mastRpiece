@@ -52,7 +52,7 @@ export function createSolarLocationsCollector(): {
       const rows = Array.from(locations).map((loc) => ({
         export_date: exportDate,
         location_id: loc,
-        bundesland_ags: locationBundesland.get(loc) ?? null,
+        bundesland_ags: locationBundesland.get(loc) ?? '99',
       }));
 
       return await bulkInsert(
@@ -94,7 +94,7 @@ export function createStorageColocationBuilder(
       const month = getMonthStart(day);
       if (!month) return;
 
-      const bundesland_ags = extractBundeslandAgs(record.Gemeindeschluessel) ?? 'NULL';
+      const bundesland_ags = extractBundeslandAgs(record.Gemeindeschluessel) ?? '99';
       const isColocated = record.LokationMaStRNummer
         ? solarLocations.has(record.LokationMaStRNummer)
         : false;
@@ -123,7 +123,7 @@ export function createStorageColocationBuilder(
         return {
           export_date: exportDate,
           month,
-          bundesland_ags: bundesland_ags === 'NULL' ? null : bundesland_ags,
+          bundesland_ags,
           storage_units: value.storage_units,
           colocated_units: value.colocated_units,
           colocated_rate:

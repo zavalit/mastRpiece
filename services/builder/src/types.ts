@@ -57,6 +57,7 @@ export interface StoryBuilder<TRecord = unknown> {
  * XML record types
  */
 export interface StorageRecord {
+  [key: string]: string | undefined;
   EinheitMastrNummer: string;
   LokationMaStRNummer?: string;
   Inbetriebnahmedatum?: string;
@@ -68,6 +69,7 @@ export interface StorageRecord {
 }
 
 export interface SolarRecord {
+  [key: string]: string | undefined;
   EinheitMastrNummer: string;
   LokationMaStRNummer?: string;
   Inbetriebnahmedatum?: string;
@@ -78,6 +80,7 @@ export interface SolarRecord {
 }
 
 export interface NetzanschlusspunktRecord {
+  [key: string]: string | undefined;
   NetzanschlusspunktMaStRNummer: string;
   LokationMaStRNummer?: string;
   NetzbetreiberMaStRNummer?: string;

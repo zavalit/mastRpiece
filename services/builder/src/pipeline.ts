@@ -4,17 +4,16 @@
  * Pipeline steps:
  * 1. Insert ingest_run with status 'running'
  * 2. Compute SHA256 of the ZIP file
- * 3. Parse ZIP entries streaming
- * 4. Route records to story builders
- * 5. TRUNCATE story tables + INSERT aggregated rows
- * 6. Mark ingest_run as success/failed
+ * 3. Parse all XML files in single pass (solar first to get locations, then storage)
+ * 4. TRUNCATE story tables + INSERT aggregated rows
+ * 5. Mark ingest_run as success/failed
  */
 
 import { randomUUID } from 'node:crypto';
 import { getPool, query } from './db/pool.js';
 import { truncateStoryTables } from './db/write.js';
 import { streamZipEntries, computeFileHash } from './io/zipReader.js';
-import { parseXmlRecords } from './io/xmlParser.js';
+import { parseXmlWithCallback } from './io/xmlParser.js';
 import {
   createStorageWaveBuilder,
   createSolarWaveBuilder,
@@ -24,6 +23,8 @@ import {
 } from './stories/index.js';
 import logger from './logger.js';
 import type { BuilderConfig, BuildResult, StorageRecord, SolarRecord } from './types.js';
+
+const PROGRESS_INTERVAL = 50000; // Log progress every N records
 
 /**
  * Run the complete build pipeline
@@ -69,67 +70,113 @@ export async function runBuild(config: BuilderConfig): Promise<BuildResult> {
     const storageLag = createRegistrationLagBuilder('storage');
     const solarLag = createRegistrationLagBuilder('solar');
 
-    // Track parsed files
-    const parsedStorageFiles: StorageRecord[][] = [];
-    const parsedSolarFiles: SolarRecord[][] = [];
+    let totalStorageRecords = 0;
+    let totalSolarRecords = 0;
+    
+    // For colocation, we need to collect storage records and process after solar
+    const storedStorageRecords: StorageRecord[] = [];
+    const needsColocation = config.stories.includes('storageColocation');
 
-    // Step 4: First pass - parse all files and collect solar locations
-    logger.info('Parsing ZIP entries (first pass)');
+    // Step 4: Parse all files - process solar first (they come first alphabetically anyway)
+    logger.info('Parsing ZIP entries (streaming)');
 
     for await (const entry of streamZipEntries(config.bulkPath)) {
       const filename = entry.filename;
-      logger.debug({ filename }, 'Processing file');
-
-      if (/^EinheitenStromSpeicher/i.test(filename) || /^AnlagenStromSpeicher/i.test(filename)) {
-        // Storage files - collect for second pass
+      
+      if (/^EinheitenSolar/i.test(filename)) {
+        // Solar files - process first to collect locations
+        logger.info({ filename }, 'Processing solar file');
+        
+        let fileRecords = 0;
+        const { recordCount } = await parseXmlWithCallback<SolarRecord>(
+          entry.stream,
+          'EinheitSolar',
+          (record) => {
+            if (config.stories.includes('solarWave')) {
+              solarWave.onRecord(record);
+            }
+            if (needsColocation) {
+              solarLocationsCollector.onRecord(record);
+            }
+            if (config.stories.includes('registrationLag')) {
+              solarLag.onRecord(record);
+            }
+            
+            fileRecords++;
+            if (fileRecords % PROGRESS_INTERVAL === 0) {
+              logger.info({ filename, records: fileRecords }, 'Progress');
+            }
+          }
+        );
+        
+        totalSolarRecords += recordCount;
+        logger.info({ filename, records: recordCount }, 'Completed file');
+        
+      } else if (/^EinheitenStromSpeicher/i.test(filename) || /^AnlagenStromSpeicher/i.test(filename)) {
+        // Storage files
+        logger.info({ filename }, 'Processing storage file');
         const recordElement = filename.includes('Anlagen') ? 'AnlageStromSpeicher' : 'EinheitStromSpeicher';
-        const records = await parseXmlRecords<StorageRecord>(entry.stream, recordElement);
-        parsedStorageFiles.push(records);
         
-        // Process for storage wave and lag
-        for (const record of records) {
-          if (config.stories.includes('storageWave')) {
-            storageWave.onRecord(record);
+        let fileRecords = 0;
+        const { recordCount } = await parseXmlWithCallback<StorageRecord>(
+          entry.stream,
+          recordElement,
+          (record) => {
+            if (config.stories.includes('storageWave')) {
+              storageWave.onRecord(record);
+            }
+            if (config.stories.includes('registrationLag')) {
+              storageLag.onRecord(record);
+            }
+            
+            // Store for colocation processing after all solar locations are known
+            if (needsColocation) {
+              storedStorageRecords.push(record);
+            }
+            
+            fileRecords++;
+            if (fileRecords % PROGRESS_INTERVAL === 0) {
+              logger.info({ filename, records: fileRecords }, 'Progress');
+            }
           }
-          if (config.stories.includes('registrationLag')) {
-            storageLag.onRecord(record);
-          }
-        }
-      } else if (/^EinheitenSolar/i.test(filename)) {
-        // Solar files
-        const records = await parseXmlRecords<SolarRecord>(entry.stream, 'EinheitSolar');
-        parsedSolarFiles.push(records);
+        );
         
-        // Process for solar wave, solar locations, and lag
-        for (const record of records) {
-          if (config.stories.includes('solarWave')) {
-            solarWave.onRecord(record);
-          }
-          if (config.stories.includes('storageColocation')) {
-            solarLocationsCollector.onRecord(record);
-          }
-          if (config.stories.includes('registrationLag')) {
-            solarLag.onRecord(record);
-          }
-        }
+        totalStorageRecords += recordCount;
+        logger.info({ filename, records: recordCount }, 'Completed file');
+      } else {
+        // Skip other files (but must consume the stream)
+        logger.debug({ filename }, 'Skipping file');
+        // Stream is already consumed by zipReader's autodrain for non-yielded entries
+        // But for yielded entries we need to drain manually
+        entry.stream.resume();
+        await new Promise<void>((resolve) => {
+          entry.stream.on('end', resolve);
+          entry.stream.on('error', resolve);
+        });
       }
     }
 
-    // Step 5: Second pass for colocation (needs solar locations first)
+    logger.info({ totalStorageRecords, totalSolarRecords }, 'Parsing complete');
+
+    // Step 5: Post-process colocation (now we have all solar locations)
     let colocationBuilder: ReturnType<typeof createStorageColocationBuilder> | null = null;
     
-    if (config.stories.includes('storageColocation')) {
-      logger.info('Processing colocation (second pass)');
+    if (needsColocation) {
+      logger.info({ 
+        solarLocations: solarLocationsCollector.getLocations().size,
+        storageRecords: storedStorageRecords.length 
+      }, 'Processing colocation');
       
       colocationBuilder = createStorageColocationBuilder(
         solarLocationsCollector.getLocations()
       );
-
-      for (const records of parsedStorageFiles) {
-        for (const record of records) {
-          colocationBuilder.onRecord(record);
-        }
+      
+      for (const record of storedStorageRecords) {
+        colocationBuilder.onRecord(record);
       }
+      
+      // Clear stored records to free memory
+      storedStorageRecords.length = 0;
     }
 
     // Step 6: Truncate and write
@@ -149,7 +196,7 @@ export async function runBuild(config: BuilderConfig): Promise<BuildResult> {
       logger.info({ rows: result.stories['solarWave'].rowsInserted }, 'Wrote solarWave');
     }
 
-    if (config.stories.includes('storageColocation')) {
+    if (needsColocation) {
       // Write solar locations first
       await solarLocationsCollector.writeToDb(pool, config.exportDate);
       

@@ -67,7 +67,7 @@ export function createRegistrationLagBuilder(
       const month = getMonthStart(day);
       if (!month) return;
 
-      const bundesland_ags = extractBundeslandAgs(record.Gemeindeschluessel) ?? 'NULL';
+      const bundesland_ags = extractBundeslandAgs(record.Gemeindeschluessel) ?? '99';
 
       const registrationDate = parseDate(record.Registrierungsdatum);
       const lag = computeLagDays(day, registrationDate);
@@ -99,7 +99,7 @@ export function createRegistrationLagBuilder(
           export_date: exportDate,
           month,
           tech,
-          bundesland_ags: bundesland_ags === 'NULL' ? null : bundesland_ags,
+          bundesland_ags,
           count_units: value.lags.length,
           p50_lag_days: percentile(sorted, 50),
           p90_lag_days: percentile(sorted, 90),

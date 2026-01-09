@@ -93,7 +93,7 @@ Parses ZIP/XML and populates story tables with a **full rebuild** approach.
 pnpm builder:demo
 
 # Run builder with custom path
-tsx services/builder/src/cli.ts \
+npx tsx services/builder/src/cli.ts \
   --bulkPath /path/to/bulk.zip \
   --exportDate 2026-01-08 \
   --stories storageWave,solarWave

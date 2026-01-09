@@ -36,7 +36,7 @@ export function createSolarWaveBuilder(): StoryBuilder<SolarRecord> {
       const day = parseDate(record.Inbetriebnahmedatum);
       if (!day) return; // Skip records without commissioning date
 
-      const bundesland_ags = extractBundeslandAgs(record.Gemeindeschluessel) ?? 'NULL';
+      const bundesland_ags = extractBundeslandAgs(record.Gemeindeschluessel) ?? '99';
       const netto_kw = parseNumber(record.Nettonennleistung) ?? 0;
 
       const key = makeKey(day, bundesland_ags);
@@ -63,7 +63,7 @@ export function createSolarWaveBuilder(): StoryBuilder<SolarRecord> {
         return {
           export_date: exportDate,
           day,
-          bundesland_ags: bundesland_ags === 'NULL' ? null : bundesland_ags,
+          bundesland_ags,
           count_units: value.count,
           sum_netto_kw: value.sum_netto_kw,
         };
