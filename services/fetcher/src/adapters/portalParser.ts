@@ -20,31 +20,32 @@ export interface PortalInfo {
 export function parsePortalHtml(html: string): PortalInfo {
   const $ = cheerio.load(html);
 
-  // Find the download link for Gesamtdatenexport
-  // The page typically has a link with text containing "Gesamtdatenexport"
+  // Find the container for "Gesamtdatenauszug vom Vortag"
+  // This is more robust than global searching as it targets the specific section shown in the UI.
+  const sectionHeading = $('h4').filter((_, el) => $(el).text().includes('Gesamtdatenauszug vom Vortag'));
+  const section = sectionHeading.closest('div');
+
   let downloadUrl = '';
   
-  $('a').each((_: number, element): boolean | void => {
-    const href = $(element).attr('href');
-    const text = $(element).text();
-    
-    // Look for links containing Gesamtdatenexport or bulk download patterns
-    if (href && (
-      text.toLowerCase().includes('gesamtdatenexport') ||
-      href.toLowerCase().includes('gesamtdatenexport') ||
-      href.toLowerCase().includes('.zip')
-    )) {
-      downloadUrl = href;
-      return false; // Break the loop
+  if (section.length > 0) {
+    // Look for the primary download button within this section
+    const downloadBtn = section.find('a.btn-primary[title="Download"]');
+    if (downloadBtn.length > 0) {
+      downloadUrl = downloadBtn.attr('href') || '';
     }
-    return undefined;
-  });
+  }
 
-  // If still not found, look for any .zip download link
+  // Fallback to legacy global search if section-based search fails
   if (!downloadUrl) {
-    $('a[href$=".zip"]').each((_: number, element): boolean | void => {
+    $('a').each((_: number, element): boolean | void => {
       const href = $(element).attr('href');
-      if (href) {
+      const text = $(element).text();
+      
+      if (href && (
+        text.toLowerCase().includes('gesamtdatenexport') ||
+        href.toLowerCase().includes('gesamtdatenexport') ||
+        href.toLowerCase().includes('.zip')
+      )) {
         downloadUrl = href;
         return false;
       }
@@ -63,27 +64,41 @@ export function parsePortalHtml(html: string): PortalInfo {
   }
 
   // Find the last updated timestamp
-  // Look for text like "Stand: 07.01.2026 05:00" or similar
   let lastUpdatedLabel = '';
   let lastUpdatedAt: Date | null = null;
 
-  // Search for timestamp patterns in the page
-  const pageText = $('body').text();
-  
-  // Pattern: "Stand: DD.MM.YYYY HH:MM" or similar
-  const standPattern = /Stand[:\s]+(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2})/i;
-  const standMatch = pageText.match(standPattern);
-  
-  if (standMatch?.[1]) {
-    lastUpdatedLabel = standMatch[1];
-    lastUpdatedAt = parseGermanDateTime(lastUpdatedLabel);
-  } else {
-    // Alternative pattern: look for date in specific elements
-    const datePattern = /(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2})/;
-    const dateMatch = pageText.match(datePattern);
-    if (dateMatch?.[1]) {
-      lastUpdatedLabel = dateMatch[1];
+  // 1. Try to find the date within the same section container
+  if (section.length > 0) {
+    const sectionText = section.text();
+    // Pattern: "Letzte Aktualisierung: DD.MM.YYYY HH:MM:SS" or "DD.MM.YYYY HH:MM"
+    const updatePattern = /Letzte\s+Aktualisierung[:\s]+(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}(?::\d{2})?)/i;
+    const updateMatch = sectionText.match(updatePattern);
+    
+    if (updateMatch?.[1]) {
+      lastUpdatedLabel = updateMatch[1];
       lastUpdatedAt = parseGermanDateTime(lastUpdatedLabel);
+    }
+  }
+
+  // 2. Fallback to global patterns if section search failed
+  if (!lastUpdatedLabel) {
+    const pageText = $('body').text();
+    
+    // Pattern: "Stand: DD.MM.YYYY HH:MM" or similar
+    const standPattern = /Stand[:\s]+(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}(?::\d{2})?)/i;
+    const standMatch = pageText.match(standPattern);
+    
+    if (standMatch?.[1]) {
+      lastUpdatedLabel = standMatch[1];
+      lastUpdatedAt = parseGermanDateTime(lastUpdatedLabel);
+    } else {
+      // Last resort: any date-looking pattern
+      const datePattern = /(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}(?::\d{2})?)/;
+      const dateMatch = pageText.match(datePattern);
+      if (dateMatch?.[1]) {
+        lastUpdatedLabel = dateMatch[1];
+        lastUpdatedAt = parseGermanDateTime(lastUpdatedLabel);
+      }
     }
   }
 
@@ -98,19 +113,19 @@ export function parsePortalHtml(html: string): PortalInfo {
  * Parse German date/time format (DD.MM.YYYY HH:MM) to Date
  */
 export function parseGermanDateTime(dateStr: string): Date | null {
-  // Pattern: DD.MM.YYYY HH:MM
-  const pattern = /(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})/;
+  // Pattern: DD.MM.YYYY HH:MM[:SS]
+  const pattern = /(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?/;
   const match = dateStr.match(pattern);
   
   if (!match) {
     return null;
   }
 
-  const [, day, month, year, hour, minute] = match;
+  const [, day, month, year, hour, minute, second = '00'] = match;
   
   // Create date in local timezone (Germany is UTC+1/UTC+2)
   // We'll assume UTC+1 for simplicity
-  const isoString = `${year}-${month}-${day}T${hour}:${minute}:00+01:00`;
+  const isoString = `${year}-${month}-${day}T${hour}:${minute}:${second}+01:00`;
   
   try {
     return new Date(isoString);

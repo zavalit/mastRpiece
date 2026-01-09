@@ -105,8 +105,18 @@ export async function downloadFile(
         onProgress(bytesDownloaded, totalBytes);
       }
 
-      // Log progress every 100MB 
-      if (bytesDownloaded - lastProgressLog > 100 * 1024 * 1024) {
+      // Log progress every 50MB or every 5%
+      const mbInterval = 50 * 1024 * 1024;
+      const shouldLogMB = bytesDownloaded - lastProgressLog > mbInterval;
+      
+      let shouldLogPercent = false;
+      if (totalBytes) {
+        const currentPercent = Math.floor((bytesDownloaded / totalBytes) * 100);
+        const lastPercent = Math.floor((lastProgressLog / totalBytes) * 100);
+        shouldLogPercent = Math.floor(currentPercent / 5) > Math.floor(lastPercent / 5);
+      }
+
+      if (shouldLogMB || shouldLogPercent) {
         lastProgressLog = bytesDownloaded;
         const elapsedSec = (Date.now() - startTime) / 1000;
         const speedMBps = elapsedSec > 0 ? (bytesDownloaded / 1024 / 1024 / elapsedSec).toFixed(2) : '0';

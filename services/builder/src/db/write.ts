@@ -5,19 +5,21 @@
 import type { Pool } from 'pg';
 
 /**
- * Truncate story tables for a fresh rebuild
+ * Delete data for a specific export snapshot
  */
-export async function truncateStoryTables(pool: Pool): Promise<void> {
-  await pool.query(`
-    TRUNCATE TABLE 
-      story_storage_day_region,
-      story_solar_day_region,
-      story_solar_locations,
-      story_storage_colocation_month,
-      story_registration_lag_month,
-      story_storage_day_netzbetreiber
-    CASCADE
-  `);
+export async function deleteStorySnapshot(pool: Pool, exportDate: string): Promise<void> {
+  const tables = [
+    'story_storage_day_region',
+    'story_solar_day_region',
+    'story_solar_locations',
+    'story_storage_colocation_month',
+    'story_registration_lag_month',
+    'story_storage_day_netzbetreiber',
+  ];
+
+  for (const table of tables) {
+    await pool.query(`DELETE FROM ${table} WHERE export_date = $1`, [exportDate]);
+  }
 }
 
 /**

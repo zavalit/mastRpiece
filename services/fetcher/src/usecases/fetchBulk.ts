@@ -181,7 +181,7 @@ export async function fetchBulk(config: FetcherConfig): Promise<FetchResult> {
 
       // Atomic publish
       logger.info({ datasetId }, 'Publishing dataset');
-      await atomicPublishDataset(runPaths, manifest, paths);
+      await atomicPublishDataset(finalRunPaths, manifest, paths);
 
       // Update fetch run as successful
       await updateFetchRunSuccess(

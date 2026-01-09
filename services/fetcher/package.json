@@ -10,7 +10,7 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "dev": "tsc --watch",
-    "fetch": "tsx src/cli.ts",
+    "fetch-data": "tsx src/cli.ts",
     "test": "vitest run",
     "test:unit": "vitest run src",
     "test:integration": "vitest run test/integration"

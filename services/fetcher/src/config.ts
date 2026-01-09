@@ -79,7 +79,7 @@ export function parseCliArgs(): FetcherConfig {
 
   return {
     portalUrl: opts.portalUrl,
-    artifactRoot: resolve(process.cwd(), opts.artifactRoot),
+    artifactRoot: resolve(process.env['INIT_CWD'] ?? process.cwd(), opts.artifactRoot),
     maxAttempts: parseInt(opts.maxAttempts, 10),
     userAgent: process.env['USER_AGENT'] ?? 'energy-fetcher/1.0',
     minFileSizeBytes: parseInt(process.env['MIN_FILE_SIZE_BYTES'] ?? '1000000', 10), // 1MB default

@@ -11,7 +11,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { getPool, query } from './db/pool.js';
-import { truncateStoryTables } from './db/write.js';
+import { deleteStorySnapshot } from './db/write.js';
 import { streamZipEntries, computeFileHash } from './io/zipReader.js';
 import { parseXmlWithCallback } from './io/xmlParser.js';
 import {
@@ -179,9 +179,9 @@ export async function runBuild(config: BuilderConfig): Promise<BuildResult> {
       storedStorageRecords.length = 0;
     }
 
-    // Step 6: Truncate and write
-    logger.info('Truncating story tables');
-    await truncateStoryTables(pool);
+    // Step 6: Targeted cleanup of this snapshot
+    logger.info({ exportDate: config.exportDate }, 'Cleaning up existing snapshot data');
+    await deleteStorySnapshot(pool, config.exportDate);
 
     // Step 7: Write story tables
     logger.info('Writing story tables');

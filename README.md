@@ -90,7 +90,7 @@ Downloads bulk ZIP files from the MaStR portal and publishes them to the artifac
 
 ```bash
 # Run fetcher with local storage
-pnpm --filter @energy/fetcher fetch fetch-bulk --artifactRoot ./data/artifacts
+pnpm --filter @energy/fetcher fetch-data fetch-bulk --artifactRoot ./data/artifacts
 
 # Run fetcher for a specific portal URL (optional)
 npx tsx services/fetcher/src/cli.ts fetch-bulk \
