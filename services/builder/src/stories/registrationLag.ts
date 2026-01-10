@@ -35,11 +35,11 @@ function computeLagDays(
 /**
  * Create a RegistrationLag builder with incremental DB writes
  */
-export function createRegistrationLagStory(): StoryBuilder<StorageRecord | SolarRecord> {
+export function createRegistrationLagStory(initialExportDate: string = ''): StoryBuilder<StorageRecord | SolarRecord> {
   const storageHistograms = new Map<string, Histogram>();
   const solarHistograms = new Map<string, Histogram>();
   let processedCount = 0;
-  let exportDate = '';
+  let exportDate = initialExportDate;
 
   const makeKey = (month: string, bl: string) => `${month}|${bl}`;
 
@@ -79,30 +79,36 @@ export function createRegistrationLagStory(): StoryBuilder<StorageRecord | Solar
     if (histograms.size === 0 || !exportDate) return;
 
     const pool = getPool();
-    const values: any[] = [];
-    const placeholders: string[] = [];
-    let paramIndex = 1;
+    const entries = Array.from(histograms.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    const CHUNK_SIZE = 1000;
 
-    for (const [key, histogram] of histograms.entries()) {
-      const [month, bundesland_ags] = key.split('|');
-      const p50 = histogramPercentile(histogram, 50);
-      const p90 = histogramPercentile(histogram, 90);
+    for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
+      const chunk = entries.slice(i, i + CHUNK_SIZE);
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
 
-      placeholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4}, $${paramIndex + 5}, $${paramIndex + 6})`);
-      values.push(exportDate, month, tech, bundesland_ags, histogram.total, p50, p90);
-      paramIndex += 7;
+      for (const [key, histogram] of chunk) {
+        const [month, bundesland_ags] = key.split('|');
+        const p50 = histogramPercentile(histogram, 50);
+        const p90 = histogramPercentile(histogram, 90);
+
+        placeholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4}, $${paramIndex + 5}, $${paramIndex + 6})`);
+        values.push(exportDate, month, tech, bundesland_ags, histogram.total, p50, p90);
+        paramIndex += 7;
+      }
+
+      await pool.query(`
+        INSERT INTO story_registration_lag_staging 
+          (export_date, month, tech, bundesland_ags, count_units, p50_lag_days, p90_lag_days)
+        VALUES ${placeholders.join(', ')}
+        ON CONFLICT (export_date, month, tech, bundesland_ags) 
+        DO UPDATE SET
+          count_units = story_registration_lag_staging.count_units + EXCLUDED.count_units,
+          p50_lag_days = (story_registration_lag_staging.p50_lag_days + EXCLUDED.p50_lag_days) / 2,
+          p90_lag_days = (story_registration_lag_staging.p90_lag_days + EXCLUDED.p90_lag_days) / 2
+      `, values);
     }
-
-    await pool.query(`
-      INSERT INTO story_registration_lag_staging 
-        (export_date, month, tech, bundesland_ags, count_units, p50_lag_days, p90_lag_days)
-      VALUES ${placeholders.join(', ')}
-      ON CONFLICT (export_date, month, tech, bundesland_ags) 
-      DO UPDATE SET
-        count_units = story_registration_lag_staging.count_units + EXCLUDED.count_units,
-        p50_lag_days = (story_registration_lag_staging.p50_lag_days + EXCLUDED.p50_lag_days) / 2,
-        p90_lag_days = (story_registration_lag_staging.p90_lag_days + EXCLUDED.p90_lag_days) / 2
-    `, values);
 
     histograms.clear();
   }
@@ -117,7 +123,7 @@ export function createRegistrationLagStory(): StoryBuilder<StorageRecord | Solar
       return null;
     },
 
-    onRecord(record: any): void {
+    async onRecord(record: any): Promise<void> {
       const mastrNr = record.EinheitMastrNummer || '';
       if (/^SEE/i.test(mastrNr)) {
         processRecord(record, solarHistograms);
@@ -131,16 +137,13 @@ export function createRegistrationLagStory(): StoryBuilder<StorageRecord | Solar
       await flushHistograms('solar', solarHistograms);
     },
 
-    async prepareWrite(client: DbClient, exportDate_: string): Promise<void> {
-      exportDate = exportDate_;
-      
+    async onPrepare(client: DbClient): Promise<void> {
       // Clean staging table
       await client.query('DELETE FROM story_registration_lag_staging WHERE export_date = $1', [exportDate]);
     },
 
-    async finalizeAndWrite(client: DbClient, exportDate_: string): Promise<StoryResult> {
+    async finalizeAndWrite(client: DbClient): Promise<StoryResult> {
       const startTime = Date.now();
-      exportDate = exportDate_;
 
       // Flush any remaining histograms
       await flushHistograms('storage', storageHistograms);

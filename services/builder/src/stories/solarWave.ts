@@ -16,10 +16,10 @@ interface AggValue {
 /**
  * Create a SolarWave builder instance with incremental DB upserts
  */
-export function createSolarWaveBuilder(): StoryBuilder<SolarRecord> {
+export function createSolarWaveBuilder(initialExportDate: string = ''): StoryBuilder<SolarRecord> {
   const aggregates = new Map<string, AggValue>();
   let processedCount = 0;
-  let exportDate = '';
+  let exportDate = initialExportDate;
 
   const makeKey = (day: string, bl: string) => `${day}|${bl}`;
 
@@ -30,30 +30,32 @@ export function createSolarWaveBuilder(): StoryBuilder<SolarRecord> {
     if (aggregates.size === 0 || !exportDate) return;
 
     const pool = getPool();
-    const rows = Array.from(aggregates.entries());
-    
-    // Build batch insert with ON CONFLICT for merging
-    const values: any[] = [];
-    const placeholders: string[] = [];
-    let paramIndex = 1;
-    
-    for (const [key, value] of rows) {
-      const [day, bundesland_ags] = key.split('|');
-      placeholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4})`);
-      values.push(exportDate, day, bundesland_ags, value.count, value.sum_netto_kw);
-      paramIndex += 5;
-    }
+    const rows = Array.from(aggregates.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    const CHUNK_SIZE = 1000;
 
-    // Use staging table for incremental writes
-    await pool.query(`
-      INSERT INTO story_solar_day_region_staging 
-        (export_date, day, bundesland_ags, count_units, sum_netto_kw)
-      VALUES ${placeholders.join(', ')}
-      ON CONFLICT (export_date, day, bundesland_ags) 
-      DO UPDATE SET
-        count_units = story_solar_day_region_staging.count_units + EXCLUDED.count_units,
-        sum_netto_kw = story_solar_day_region_staging.sum_netto_kw + EXCLUDED.sum_netto_kw
-    `, values);
+    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+      const chunk = rows.slice(i, i + CHUNK_SIZE);
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
+
+      for (const [key, value] of chunk) {
+        const [day, bundesland_ags] = key.split('|');
+        placeholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4})`);
+        values.push(exportDate, day, bundesland_ags, value.count, value.sum_netto_kw);
+        paramIndex += 5;
+      }
+
+      await pool.query(`
+        INSERT INTO story_solar_day_region_staging 
+          (export_date, day, bundesland_ags, count_units, sum_netto_kw)
+        VALUES ${placeholders.join(', ')}
+        ON CONFLICT (export_date, day, bundesland_ags) 
+        DO UPDATE SET
+          count_units = story_solar_day_region_staging.count_units + EXCLUDED.count_units,
+          sum_netto_kw = story_solar_day_region_staging.sum_netto_kw + EXCLUDED.sum_netto_kw
+      `, values);
+    }
 
     aggregates.clear();
   }
@@ -66,7 +68,7 @@ export function createSolarWaveBuilder(): StoryBuilder<SolarRecord> {
       return null;
     },
 
-    onRecord(record: SolarRecord): void {
+    async onRecord(record: SolarRecord): Promise<void> {
       const day = parseDate(record.Inbetriebnahmedatum);
       if (!day) return;
 
@@ -89,9 +91,7 @@ export function createSolarWaveBuilder(): StoryBuilder<SolarRecord> {
       processedCount++;
     },
 
-    async prepareWrite(client: DbClient, exportDate_: string): Promise<void> {
-      exportDate = exportDate_;
-      
+    async onPrepare(client: DbClient): Promise<void> {
       // Clean staging table for this export_date
       await client.query(`
         DELETE FROM story_solar_day_region_staging 
@@ -103,9 +103,8 @@ export function createSolarWaveBuilder(): StoryBuilder<SolarRecord> {
       await flushToDb();
     },
 
-    async finalizeAndWrite(client: DbClient, exportDate_: string): Promise<StoryResult> {
+    async finalizeAndWrite(client: DbClient): Promise<StoryResult> {
       const startTime = Date.now();
-      exportDate = exportDate_;
 
       // Flush any remaining in-memory aggregates
       await flushToDb();

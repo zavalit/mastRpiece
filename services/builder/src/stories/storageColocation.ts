@@ -1,80 +1,80 @@
 /**
  * @fileoverview Storage Colocation story builder with incremental DB writes
- * Uses two-pass approach with staging tables
+ * Uses staging tables for both Solar and Storage units to compute colocation via SQL joins.
  */
 
 import type { DbClient } from '../types.js';
 import type { StoryBuilder, StoryResult, SolarRecord, StorageRecord } from '../types.js';
 import { parseDate, extractBundeslandAgs, getMonthStart } from '../io/xmlParser.js';
 import { getPool } from '../db/pool.js';
-import { streamZipEntries } from '../io/zipReader.js';
-import { parseXmlWithCallback } from '../io/xmlParser.js';
-
-interface AggValue {
-  storage_units: number;
-  colocated_units: number;
-}
 
 /**
- * Create StorageColocation story builder with incremental DB writes
+ * Story for tracking storage units colocated with solar units
  */
-export function createStorageColocationStory(): StoryBuilder<SolarRecord | StorageRecord> {
-  const solarLocations = new Map<string, string>();  // Buffer for one file
-  const aggregates = new Map<string, AggValue>();
+export function createStorageColocationStory(initialExportDate: string = ''): StoryBuilder<SolarRecord | StorageRecord> {
+  const solarLocations = new Map<string, string>(); 
+  const storageUnits = new Map<string, { month: string; bl: string }>();
+  
   let processedCount = 0;
-  let exportDate = '';
-
-  const makeKey = (month: string, bl: string) => `${month}|${bl}`;
+  let exportDate = initialExportDate;
+  const FLUSH_THRESHOLD = 10000;
 
   async function flushSolarLocations(): Promise<void> {
     if (solarLocations.size === 0 || !exportDate) return;
 
     const pool = getPool();
-    const values: any[] = [];
-    const placeholders: string[] = [];
-    let paramIndex = 1;
+    const entries = Array.from(solarLocations.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    const CHUNK_SIZE = 1000;
 
-    for (const [location_id, bundesland_ags] of solarLocations.entries()) {
-      placeholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2})`);
-      values.push(exportDate, location_id, bundesland_ags);
-      paramIndex += 3;
+    for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
+      const chunk = entries.slice(i, i + CHUNK_SIZE);
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
+
+      for (const [location_id, bundesland_ags] of chunk) {
+        placeholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2})`);
+        values.push(exportDate, location_id, bundesland_ags);
+        paramIndex += 3;
+      }
+
+      await pool.query(`
+        INSERT INTO story_solar_locations_staging (export_date, location_id, bundesland_ags)
+        VALUES ${placeholders.join(', ')}
+        ON CONFLICT (export_date, location_id) DO NOTHING
+      `, values);
     }
-
-    await pool.query(`
-      INSERT INTO story_solar_locations_staging (export_date, location_id, bundesland_ags)
-      VALUES ${placeholders.join(', ')}
-      ON CONFLICT (export_date, location_id) DO NOTHING
-    `, values);
 
     solarLocations.clear();
   }
 
-  async function flushAggregates(): Promise<void> {
-    if (aggregates.size === 0 || !exportDate) return;
+  async function flushStorageUnits(): Promise<void> {
+    if (storageUnits.size === 0 || !exportDate) return;
 
     const pool = getPool();
-    const values: any[] = [];
-    const placeholders: string[] = [];
-    let paramIndex = 1;
+    const entries = Array.from(storageUnits.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    const CHUNK_SIZE = 1000;
 
-    for (const [key, value] of aggregates.entries()) {
-      const [month, bundesland_ags] = key.split('|');
-      placeholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4})`);
-      values.push(exportDate, month, bundesland_ags, value.storage_units, value.colocated_units);
-      paramIndex += 5;
+    for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
+      const chunk = entries.slice(i, i + CHUNK_SIZE);
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
+
+      for (const [location_id, data] of chunk) {
+        placeholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3})`);
+        values.push(exportDate, location_id, data.month, data.bl);
+        paramIndex += 4;
+      }
+
+      await pool.query(`
+        INSERT INTO story_storage_units_staging (export_date, location_id, month, bundesland_ags)
+        VALUES ${placeholders.join(', ')}
+        ON CONFLICT (export_date, location_id) DO NOTHING
+      `, values);
     }
 
-    await pool.query(`
-      INSERT INTO story_storage_colocation_staging 
-        (export_date, month, bundesland_ags, storage_units, colocated_units)
-      VALUES ${placeholders.join(', ')}
-      ON CONFLICT (export_date, month, bundesland_ags) 
-      DO UPDATE SET
-        storage_units = story_storage_colocation_staging.storage_units + EXCLUDED.storage_units,
-        colocated_units = story_storage_colocation_staging.colocated_units + EXCLUDED.colocated_units
-    `, values);
-
-    aggregates.clear();
+    storageUnits.clear();
   }
 
   return {
@@ -82,99 +82,75 @@ export function createStorageColocationStory(): StoryBuilder<SolarRecord | Stora
     
     getInterestedElement(filename: string): string | null {
       if (/^EinheitenSolar.*\.xml$/i.test(filename)) return 'EinheitSolar';
+      if (/^EinheitenStromSpeicher.*\.xml$/i.test(filename)) return 'EinheitStromSpeicher';
+      if (/^AnlagenStromSpeicher.*\.xml$/i.test(filename)) return 'AnlageStromSpeicher';
       return null;
     },
 
-    onRecord(record: any): void {
+    async onRecord(record: any): Promise<void> {
       const mastrNr = record.EinheitMastrNummer || '';
-      if (/^SEE/i.test(mastrNr) && record.LokationMaStRNummer) {
+      const locationId = record.LokationMaStRNummer;
+      if (!locationId) return;
+
+      if (/^SEE/i.test(mastrNr)) {
+        // Solar unit
         const bl = extractBundeslandAgs(record.Gemeindeschluessel) || '99';
-        solarLocations.set(record.LokationMaStRNummer, bl);
+        solarLocations.set(locationId, bl);
+        if (solarLocations.size >= FLUSH_THRESHOLD) {
+          await flushSolarLocations();
+        }
+      } else if (/^SSE/i.test(mastrNr)) {
+        // Storage unit
+        const day = parseDate(record.Inbetriebnahmedatum);
+        if (!day) return;
+        const month = getMonthStart(day);
+        if (!month) return;
+        
+        const bl = extractBundeslandAgs(record.Gemeindeschluessel) || '99';
+        storageUnits.set(locationId, { month, bl });
+        if (storageUnits.size >= FLUSH_THRESHOLD) {
+          await flushStorageUnits();
+        }
+        processedCount++;
       }
     },
 
     async onFileComplete(): Promise<void> {
       await flushSolarLocations();
+      await flushStorageUnits();
     },
 
-    async prepareWrite(client: DbClient, exportDate_: string, bulkPath: string): Promise<void> {
-      exportDate = exportDate_;
-      
+    async onPrepare(client: DbClient): Promise<void> {
       // Clean staging tables
       await client.query('DELETE FROM story_solar_locations_staging WHERE export_date = $1', [exportDate]);
+      await client.query('DELETE FROM story_storage_units_staging WHERE export_date = $1', [exportDate]);
       await client.query('DELETE FROM story_storage_colocation_staging WHERE export_date = $1', [exportDate]);
 
-      // Flush any remaining solar locations
-      await flushSolarLocations();
-
-      // Second pass: process storage files with incremental flushes
-      for await (const entry of streamZipEntries(bulkPath)) {
-        const filename = entry.filename;
-        
-        let recordElement: string | null = null;
-        if (/^EinheitenStromSpeicher.*\.xml$/i.test(filename)) {
-          recordElement = 'EinheitStromSpeicher';
-        } else if (/^AnlagenStromSpeicher.*\.xml$/i.test(filename)) {
-          recordElement = 'AnlageStromSpeicher';
-        }
-
-        if (!recordElement) {
-          entry.stream.resume();
-          await new Promise<void>((resolve) => {
-            entry.stream.on('end', resolve);
-            entry.stream.on('error', resolve);
-          });
-          continue;
-        }
-
-        await parseXmlWithCallback<StorageRecord>(
-          entry.stream,
-          recordElement,
-          (record) => {
-            const day = parseDate(record.Inbetriebnahmedatum);
-            if (!day) return;
-
-            const month = getMonthStart(day);
-            if (!month) return;
-
-            const bundesland_ags = extractBundeslandAgs(record.Gemeindeschluessel) ?? '99';
-            const key = makeKey(month, bundesland_ags);
-            const existing = aggregates.get(key);
-
-            if (existing) {
-              existing.storage_units++;
-            } else {
-              aggregates.set(key, {
-                storage_units: 1,
-                colocated_units: 0,
-              });
-            }
-            processedCount++;
-          }
-        );
-
-        // Flush after each file
-        await flushAggregates();
-      }
-
-      // Compute colocation by joining with staging table
-      await client.query(`
-        UPDATE story_storage_colocation_staging sc
-        SET colocated_units = (
-          SELECT COUNT(DISTINCT sr.location_id)
-          FROM story_solar_locations_staging sl
-          WHERE sl.export_date = sc.export_date
-            AND sl.bundesland_ags = sc.bundesland_ags
-        )
-        WHERE sc.export_date = $1
-      `, [exportDate]);
+      // Note: All records were handled during Pass 1 via onRecord
     },
 
-    async finalizeAndWrite(client: DbClient, exportDate_: string): Promise<StoryResult> {
+    async finalizeAndWrite(client: DbClient): Promise<StoryResult> {
       const startTime = Date.now();
-      exportDate = exportDate_;
 
-      // Copy from staging with computed rate
+      // Aggregate storage units and check colocation via SQL JOIN
+      // JOIN with sl ensures we only count storage units whose LOCATION has at least one solar unit
+      await client.query(`
+        INSERT INTO story_storage_colocation_staging (export_date, month, bundesland_ags, storage_units, colocated_units)
+        SELECT 
+          su.export_date,
+          su.month,
+          su.bundesland_ags,
+          COUNT(*) as storage_units,
+          COUNT(sl.location_id) as colocated_units
+        FROM story_storage_units_staging su
+        LEFT JOIN story_solar_locations_staging sl 
+          ON su.export_date = sl.export_date 
+          AND su.location_id = sl.location_id
+        WHERE su.export_date = $1
+        GROUP BY su.export_date, su.month, su.bundesland_ags
+      `, [exportDate]);
+
+      // Copy to final table with rate computation
       const result = await client.query(`
         INSERT INTO story_storage_colocation_month 
           (export_date, month, bundesland_ags, storage_units, colocated_units, colocated_rate)
@@ -190,18 +166,24 @@ export function createStorageColocationStory(): StoryBuilder<SolarRecord | Stora
           END as colocated_rate
         FROM story_storage_colocation_staging
         WHERE export_date = $1
+        ON CONFLICT (export_date, month, bundesland_ags) DO UPDATE SET
+          storage_units = EXCLUDED.storage_units,
+          colocated_units = EXCLUDED.colocated_units,
+          colocated_rate = EXCLUDED.colocated_rate
       `, [exportDate]);
 
-      // Copy solar locations to final table
+      // Optional: Copy solar locations to permanent table if needed for other features
       await client.query(`
         INSERT INTO story_solar_locations (export_date, location_id, bundesland_ags)
         SELECT export_date, location_id, bundesland_ags
         FROM story_solar_locations_staging
         WHERE export_date = $1
+        ON CONFLICT (export_date, location_id) DO NOTHING
       `, [exportDate]);
 
-      // Cleanup
+      // Cleanup staging
       await client.query('DELETE FROM story_solar_locations_staging WHERE export_date = $1', [exportDate]);
+      await client.query('DELETE FROM story_storage_units_staging WHERE export_date = $1', [exportDate]);
       await client.query('DELETE FROM story_storage_colocation_staging WHERE export_date = $1', [exportDate]);
 
       return {
@@ -213,7 +195,7 @@ export function createStorageColocationStory(): StoryBuilder<SolarRecord | Stora
 
     reset(): void {
       solarLocations.clear();
-      aggregates.clear();
+      storageUnits.clear();
       processedCount = 0;
       exportDate = '';
     },

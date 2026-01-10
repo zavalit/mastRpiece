@@ -11,7 +11,7 @@ import { createRegistrationLagStory } from './registrationLag.js';
 /**
  * Map of story names to their factory functions
  */
-const STORY_FACTORIES: Record<string, () => StoryBuilder> = {
+const STORY_FACTORIES: Record<string, (exportDate: string) => StoryBuilder> = {
   storageWave: createStorageWaveBuilder,
   solarWave: createSolarWaveBuilder,
   storageColocation: createStorageColocationStory,
@@ -21,13 +21,14 @@ const STORY_FACTORIES: Record<string, () => StoryBuilder> = {
 /**
  * Create story builders based on the requested story names
  */
-export function createStoryBuilders(storyNames: string[]): StoryBuilder[] {
+export function createStoryBuilders(storyNames: string[], exportDate: string): StoryBuilder[] {
   const builders: StoryBuilder[] = [];
 
   for (const name of storyNames) {
     const factory = STORY_FACTORIES[name];
     if (factory) {
-      builders.push(factory());
+      const builder = factory(exportDate);
+      builders.push(builder);
     } else {
       console.warn(`Unknown story: ${name}`);
     }

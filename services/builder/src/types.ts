@@ -53,8 +53,8 @@ export interface StoryBuilder<TRecord = any> {
    */
   getInterestedElement(filename: string): string | null;
   
-  /** Process a single record from XML */
-  onRecord(record: TRecord): void;
+  /** Process a single record from XML (can be async for on-demand flushes) */
+  onRecord(record: TRecord): void | Promise<void>;
   
   /** 
    * Optional: Called after each file completes processing.
@@ -63,15 +63,15 @@ export interface StoryBuilder<TRecord = any> {
   onFileComplete?(filename: string, recordCount: number): Promise<void>;
   
   /** Finalize and write aggregated data to DB */
-  finalizeAndWrite(client: DbClient, exportDate: string, bulkPath: string): Promise<StoryResult>;
+  finalizeAndWrite(client: DbClient, bulkPath: string): Promise<StoryResult>;
   
   /** Reset internal state for a new run */
   reset(): void;
 
   /** 
-   * Optional: Perform pre-write tasks (e.g., helper tables, second-pass processing) 
+   * Optional: Perform pre-write tasks (e.g., helper tables, second-pass processing, cleaning staging) 
    */
-  prepareWrite?(client: DbClient, exportDate: string, bulkPath: string): Promise<void>;
+  onPrepare?(client: DbClient, bulkPath: string): Promise<void>;
 }
 
 /**

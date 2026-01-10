@@ -33,7 +33,7 @@ function detectEncoding(buffer: Buffer): { encoding: string; offset: number } {
 export async function parseXmlWithCallback<T extends Record<string, string | undefined>>(
   stream: Readable,
   recordElement: string,
-  onRecord: (record: T) => void
+  onRecord: (record: T) => void | Promise<void>
 ): Promise<{ recordCount: number }> {
   return new Promise((resolve, reject) => {
     // Collect enough data to detect encoding
@@ -47,6 +47,7 @@ export async function parseXmlWithCallback<T extends Record<string, string | und
     let currentElement = '';
     let inRecord = false;
     let currentRecord: Record<string, string> = {};
+    let pendingPromises: Promise<void>[] = [];
 
     const initParser = (encoding: string, offset: number, initialBuffer: Buffer) => {
       // Create SAX parser (strict mode)
@@ -72,7 +73,10 @@ export async function parseXmlWithCallback<T extends Record<string, string | und
       parser.onclosetag = (tagName) => {
         if (tagName === recordElement && inRecord) {
           inRecord = false;
-          onRecord(currentRecord as T);
+          const promise = onRecord(currentRecord as T);
+          if (promise instanceof Promise) {
+            pendingPromises.push(promise);
+          }
           recordCount++;
           currentRecord = {};
         }
@@ -89,11 +93,20 @@ export async function parseXmlWithCallback<T extends Record<string, string | und
       // Create stateful decoder stream
       const decodeStream = iconv.decodeStream(encoding);
 
-      decodeStream.on('data', (str: string) => {
+      decodeStream.on('data', async (str: string) => {
         try {
+          decodeStream.pause();
           parser.write(str);
+          
+          if (pendingPromises.length > 0) {
+            await Promise.all(pendingPromises);
+            pendingPromises = [];
+          }
+          
+          decodeStream.resume();
         } catch (err) {
           console.error('Parser write error:', err);
+          decodeStream.resume();
         }
       });
 

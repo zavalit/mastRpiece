@@ -58,10 +58,18 @@ export async function runBuild(config: BuilderConfig): Promise<BuildResult> {
 
   try {
     // Step 3: Initialize builders from factory
-    const builders = createStoryBuilders(config.stories);
+    const builders = createStoryBuilders(config.stories, config.exportDate);
     logger.info({ stories: builders.map(b => b.name) }, 'Initialized story builders');
 
-    // Step 4: Parse all files - dispatch records to interested stories
+    // Step 4: Run onPrepare hooks (clear staging, etc.)
+    for (const builder of builders) {
+      if (builder.onPrepare) {
+        logger.info({ story: builder.name }, 'Running onPrepare');
+        await builder.onPrepare(pool, config.bulkPath);
+      }
+    }
+
+    // Step 5: Parse all files - dispatch records to interested stories
     logger.info('Parsing ZIP entries (streaming)');
 
     let totalRecords = 0;
@@ -107,9 +115,9 @@ export async function runBuild(config: BuilderConfig): Promise<BuildResult> {
       const { recordCount } = await parseXmlWithCallback(
         entry.stream,
         targetElement,
-        (record) => {
+        async (record) => {
           for (const builder of targetBuilders) {
-            builder.onRecord(record);
+            await builder.onRecord(record);
           }
           fileRecords++;
           if (fileRecords % PROGRESS_INTERVAL === 0) {
@@ -131,32 +139,24 @@ export async function runBuild(config: BuilderConfig): Promise<BuildResult> {
 
     logger.info({ totalRecords }, 'Parsing complete');
 
-    // Step 5: Atomic write phase
+    // Step 6: Atomic write phase
     await withTransaction(async (client) => {
-      // Step 5a: Targeted cleanup of ONLY the stories we are building
+      // Step 6a: Targeted cleanup of ONLY the stories we are building
       logger.info(
         { exportDate: config.exportDate, stories: config.stories },
         'Cleaning up existing snapshot data selectively'
       );
       await deleteStorySnapshot(client, config.exportDate, config.stories);
 
-      // Step 5b: Run prepareWrite hooks
-      for (const builder of builders) {
-        if (builder.prepareWrite) {
-          logger.info({ story: builder.name }, 'Running prepareWrite');
-          await builder.prepareWrite(client, config.exportDate, config.bulkPath);
-        }
-      }
-
-      // Step 5c: Write story tables
+      // Step 6b: Write story tables
       logger.info('Writing story tables');
       for (const builder of builders) {
-        const storyResult = await builder.finalizeAndWrite(client, config.exportDate, config.bulkPath);
+        const storyResult = await builder.finalizeAndWrite(client, config.bulkPath);
         result.stories[builder.name] = storyResult;
         logger.info({ story: builder.name, rows: storyResult.rowsInserted }, 'Wrote story');
       }
 
-      // Step 5d: Mark success inside the transaction
+      // Step 6c: Mark success inside the transaction
       await client.query(
         `UPDATE ingest_run SET
           finished_at = now(),
