@@ -83,9 +83,10 @@ export function createStorageColocationBuilder(initialExportDate: string = ''): 
     name: 'storageColocation',
     
     getInterestedElement(filename: string): string | null {
+      // Only process unit-level records which have LokationMaStRNummer
+      // AnlagenStromSpeicher records are installation-level and don't have location data
       if (/^EinheitenSolar.*\.xml$/i.test(filename)) return 'EinheitSolar';
       if (/^EinheitenStromSpeicher.*\.xml$/i.test(filename)) return 'EinheitStromSpeicher';
-      if (/^AnlagenStromSpeicher.*\.xml$/i.test(filename)) return 'AnlageStromSpeicher';
       return null;
     },
 
