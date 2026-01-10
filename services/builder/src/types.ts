@@ -5,6 +5,13 @@
 import type { Pool } from 'pg';
 
 /**
+ * Shared interface for DB operations (works with both Pool and PoolClient)
+ */
+export interface DbClient {
+  query: (text: string, params?: any[]) => Promise<any>;
+}
+
+/**
  * Builder CLI configuration
  */
 export interface BuilderConfig {
@@ -36,21 +43,35 @@ export interface StoryResult {
 /**
  * Story builder interface
  */
-export interface StoryBuilder<TRecord = unknown> {
+export interface StoryBuilder<TRecord = any> {
   /** Name of the story (for logging) */
   readonly name: string;
   
-  /** XML file patterns this builder handles */
-  readonly filePatterns: RegExp[];
+  /** 
+   * Return the XML element name to parse if interested in this file, 
+   * or null to skip.
+   */
+  getInterestedElement(filename: string): string | null;
   
   /** Process a single record from XML */
   onRecord(record: TRecord): void;
   
+  /** 
+   * Optional: Called after each file completes processing.
+   * Allows builders to incrementally flush data to prevent memory buildup.
+   */
+  onFileComplete?(filename: string, recordCount: number): Promise<void>;
+  
   /** Finalize and write aggregated data to DB */
-  finalizeAndWrite(pool: Pool, exportDate: string): Promise<StoryResult>;
+  finalizeAndWrite(client: DbClient, exportDate: string, bulkPath: string): Promise<StoryResult>;
   
   /** Reset internal state for a new run */
   reset(): void;
+
+  /** 
+   * Optional: Perform pre-write tasks (e.g., helper tables, second-pass processing) 
+   */
+  prepareWrite?(client: DbClient, exportDate: string, bulkPath: string): Promise<void>;
 }
 
 /**

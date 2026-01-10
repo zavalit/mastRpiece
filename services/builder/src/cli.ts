@@ -28,7 +28,8 @@ function parseArgs(): BuilderConfig {
     const next = args[i + 1];
 
     if (arg === '--bulkPath' && next) {
-      config.bulkPath = resolve(next);
+      const baseDir = process.env['INIT_CWD'] || process.cwd();
+      config.bulkPath = resolve(baseDir, next);
       i++;
     } else if (arg === '--exportDate' && next) {
       config.exportDate = next;

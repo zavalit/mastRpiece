@@ -6,7 +6,7 @@
   "main": "dist/cli.js",
   "scripts": {
     "build": "tsc",
-    "dev": "tsx src/cli.ts"
+    "dev": "NODE_OPTIONS='--max-old-space-size=8192' tsx src/cli.ts"
   },
   "dependencies": {
     "@energy/shared": "workspace:*",

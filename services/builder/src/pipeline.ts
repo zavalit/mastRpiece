@@ -4,25 +4,19 @@
  * Pipeline steps:
  * 1. Insert ingest_run with status 'running'
  * 2. Compute SHA256 of the ZIP file
- * 3. Parse all XML files in single pass (solar first to get locations, then storage)
- * 4. TRUNCATE story tables + INSERT aggregated rows
+ * 3. Parse all XML files - dispatch records to interested stories
+ * 4. Run prepareWrite hooks, then finalizeAndWrite for each story
  * 5. Mark ingest_run as success/failed
  */
 
 import { randomUUID } from 'node:crypto';
-import { getPool, query } from './db/pool.js';
+import { getPool, query, withTransaction } from './db/pool.js';
 import { deleteStorySnapshot } from './db/write.js';
 import { streamZipEntries, computeFileHash } from './io/zipReader.js';
 import { parseXmlWithCallback } from './io/xmlParser.js';
-import {
-  createStorageWaveBuilder,
-  createSolarWaveBuilder,
-  createSolarLocationsCollector,
-  createStorageColocationBuilder,
-  createRegistrationLagBuilder,
-} from './stories/index.js';
+import { createStoryBuilders } from './stories/factory.js';
 import logger from './logger.js';
-import type { BuilderConfig, BuildResult, StorageRecord, SolarRecord } from './types.js';
+import type { BuilderConfig, BuildResult, StoryBuilder } from './types.js';
 
 const PROGRESS_INTERVAL = 50000; // Log progress every N records
 
@@ -63,166 +57,114 @@ export async function runBuild(config: BuilderConfig): Promise<BuildResult> {
   };
 
   try {
-    // Step 3: Initialize builders
-    const storageWave = createStorageWaveBuilder();
-    const solarWave = createSolarWaveBuilder();
-    const solarLocationsCollector = createSolarLocationsCollector();
-    const storageLag = createRegistrationLagBuilder('storage');
-    const solarLag = createRegistrationLagBuilder('solar');
+    // Step 3: Initialize builders from factory
+    const builders = createStoryBuilders(config.stories);
+    logger.info({ stories: builders.map(b => b.name) }, 'Initialized story builders');
 
-    let totalStorageRecords = 0;
-    let totalSolarRecords = 0;
-    
-    // For colocation, we need to collect storage records and process after solar
-    const storedStorageRecords: StorageRecord[] = [];
-    const needsColocation = config.stories.includes('storageColocation');
-
-    // Step 4: Parse all files - process solar first (they come first alphabetically anyway)
+    // Step 4: Parse all files - dispatch records to interested stories
     logger.info('Parsing ZIP entries (streaming)');
+
+    let totalRecords = 0;
 
     for await (const entry of streamZipEntries(config.bulkPath)) {
       const filename = entry.filename;
-      
-      if (/^EinheitenSolar/i.test(filename)) {
-        // Solar files - process first to collect locations
-        logger.info({ filename }, 'Processing solar file');
-        
-        let fileRecords = 0;
-        const { recordCount } = await parseXmlWithCallback<SolarRecord>(
-          entry.stream,
-          'EinheitSolar',
-          (record) => {
-            if (config.stories.includes('solarWave')) {
-              solarWave.onRecord(record);
-            }
-            if (needsColocation) {
-              solarLocationsCollector.onRecord(record);
-            }
-            if (config.stories.includes('registrationLag')) {
-              solarLag.onRecord(record);
-            }
-            
-            fileRecords++;
-            if (fileRecords % PROGRESS_INTERVAL === 0) {
-              logger.info({ filename, records: fileRecords }, 'Progress');
-            }
-          }
-        );
-        
-        totalSolarRecords += recordCount;
-        logger.info({ filename, records: recordCount }, 'Completed file');
-        
-      } else if (/^EinheitenStromSpeicher/i.test(filename) || /^AnlagenStromSpeicher/i.test(filename)) {
-        // Storage files
-        logger.info({ filename }, 'Processing storage file');
-        const recordElement = filename.includes('Anlagen') ? 'AnlageStromSpeicher' : 'EinheitStromSpeicher';
-        
-        let fileRecords = 0;
-        const { recordCount } = await parseXmlWithCallback<StorageRecord>(
-          entry.stream,
-          recordElement,
-          (record) => {
-            if (config.stories.includes('storageWave')) {
-              storageWave.onRecord(record);
-            }
-            if (config.stories.includes('registrationLag')) {
-              storageLag.onRecord(record);
-            }
-            
-            // Store for colocation processing after all solar locations are known
-            if (needsColocation) {
-              storedStorageRecords.push(record);
-            }
-            
-            fileRecords++;
-            if (fileRecords % PROGRESS_INTERVAL === 0) {
-              logger.info({ filename, records: fileRecords }, 'Progress');
-            }
-          }
-        );
-        
-        totalStorageRecords += recordCount;
-        logger.info({ filename, records: recordCount }, 'Completed file');
-      } else {
-        // Skip other files (but must consume the stream)
-        logger.debug({ filename }, 'Skipping file');
-        // Stream is already consumed by zipReader's autodrain for non-yielded entries
-        // But for yielded entries we need to drain manually
+
+      // Find all builders interested in this file
+      const interestedBuilders: { builder: StoryBuilder; element: string }[] = [];
+      for (const builder of builders) {
+        const element = builder.getInterestedElement(filename);
+        if (element) {
+          interestedBuilders.push({ builder, element });
+        }
+      }
+
+      if (interestedBuilders.length === 0) {
+        // No builders interested - skip file
+        logger.debug({ filename }, 'Skipping file (no interested builders)');
         entry.stream.resume();
         await new Promise<void>((resolve) => {
           entry.stream.on('end', resolve);
           entry.stream.on('error', resolve);
         });
+        continue;
       }
-    }
 
-    logger.info({ totalStorageRecords, totalSolarRecords }, 'Parsing complete');
+      // Group by element name (in case multiple builders want the same element)
+      const elementToBuilders = new Map<string, StoryBuilder[]>();
+      for (const { builder, element } of interestedBuilders) {
+        const existing = elementToBuilders.get(element) || [];
+        existing.push(builder);
+        elementToBuilders.set(element, existing);
+      }
 
-    // Step 5: Post-process colocation (now we have all solar locations)
-    let colocationBuilder: ReturnType<typeof createStorageColocationBuilder> | null = null;
-    
-    if (needsColocation) {
-      logger.info({ 
-        solarLocations: solarLocationsCollector.getLocations().size,
-        storageRecords: storedStorageRecords.length 
-      }, 'Processing colocation');
-      
-      colocationBuilder = createStorageColocationBuilder(
-        solarLocationsCollector.getLocations()
+      // Process file - we can only parse once, so use the first element
+      // (assumption: all interested builders want the same element for a given file)
+      const [targetElement, targetBuilders] = [...elementToBuilders.entries()][0]!;
+
+      logger.info({ filename, element: targetElement, builderCount: targetBuilders.length }, 'Processing file');
+
+      let fileRecords = 0;
+      const { recordCount } = await parseXmlWithCallback(
+        entry.stream,
+        targetElement,
+        (record) => {
+          for (const builder of targetBuilders) {
+            builder.onRecord(record);
+          }
+          fileRecords++;
+          if (fileRecords % PROGRESS_INTERVAL === 0) {
+            logger.info({ filename, records: fileRecords }, 'Progress');
+          }
+        }
       );
+
+      totalRecords += recordCount;
+      logger.info({ filename, records: recordCount }, 'Completed file');
       
-      for (const record of storedStorageRecords) {
-        colocationBuilder.onRecord(record);
-      }
-      
-      // Clear stored records to free memory
-      storedStorageRecords.length = 0;
-    }
-
-    // Step 6: Targeted cleanup of this snapshot
-    logger.info({ exportDate: config.exportDate }, 'Cleaning up existing snapshot data');
-    await deleteStorySnapshot(pool, config.exportDate);
-
-    // Step 7: Write story tables
-    logger.info('Writing story tables');
-
-    if (config.stories.includes('storageWave')) {
-      result.stories['storageWave'] = await storageWave.finalizeAndWrite(pool, config.exportDate);
-      logger.info({ rows: result.stories['storageWave'].rowsInserted }, 'Wrote storageWave');
-    }
-
-    if (config.stories.includes('solarWave')) {
-      result.stories['solarWave'] = await solarWave.finalizeAndWrite(pool, config.exportDate);
-      logger.info({ rows: result.stories['solarWave'].rowsInserted }, 'Wrote solarWave');
-    }
-
-    if (needsColocation) {
-      // Write solar locations first
-      await solarLocationsCollector.writeToDb(pool, config.exportDate);
-      
-      if (colocationBuilder) {
-        result.stories['storageColocation'] = await colocationBuilder.finalizeAndWrite(pool, config.exportDate);
-        logger.info({ rows: result.stories['storageColocation'].rowsInserted }, 'Wrote storageColocation');
+      // Call onFileComplete hook if implemented
+      for (const builder of targetBuilders) {
+        if (builder.onFileComplete) {
+          await builder.onFileComplete(filename, recordCount);
+        }
       }
     }
 
-    if (config.stories.includes('registrationLag')) {
-      result.stories['storageLag'] = await storageLag.finalizeAndWrite(pool, config.exportDate);
-      result.stories['solarLag'] = await solarLag.finalizeAndWrite(pool, config.exportDate);
-      logger.info({
-        storage: result.stories['storageLag'].rowsInserted,
-        solar: result.stories['solarLag'].rowsInserted,
-      }, 'Wrote registrationLag');
-    }
+    logger.info({ totalRecords }, 'Parsing complete');
 
-    // Step 8: Mark success
-    await query(
-      `UPDATE ingest_run SET
-        finished_at = now(),
-        status = 'success'
-      WHERE export_date = $1`,
-      [config.exportDate]
-    );
+    // Step 5: Atomic write phase
+    await withTransaction(async (client) => {
+      // Step 5a: Targeted cleanup of ONLY the stories we are building
+      logger.info(
+        { exportDate: config.exportDate, stories: config.stories },
+        'Cleaning up existing snapshot data selectively'
+      );
+      await deleteStorySnapshot(client, config.exportDate, config.stories);
+
+      // Step 5b: Run prepareWrite hooks
+      for (const builder of builders) {
+        if (builder.prepareWrite) {
+          logger.info({ story: builder.name }, 'Running prepareWrite');
+          await builder.prepareWrite(client, config.exportDate, config.bulkPath);
+        }
+      }
+
+      // Step 5c: Write story tables
+      logger.info('Writing story tables');
+      for (const builder of builders) {
+        const storyResult = await builder.finalizeAndWrite(client, config.exportDate, config.bulkPath);
+        result.stories[builder.name] = storyResult;
+        logger.info({ story: builder.name, rows: storyResult.rowsInserted }, 'Wrote story');
+      }
+
+      // Step 5d: Mark success inside the transaction
+      await client.query(
+        `UPDATE ingest_run SET
+          finished_at = now(),
+          status = 'success'
+        WHERE export_date = $1`,
+        [config.exportDate]
+      );
+    });
 
     result.status = 'success';
     result.duration_ms = Date.now() - startTime;

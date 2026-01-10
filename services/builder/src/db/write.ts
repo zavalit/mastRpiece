@@ -1,24 +1,46 @@
+import type { Pool, PoolClient } from 'pg';
+import type { DbClient } from '../types.js';
+
+const STORY_TABLES: Record<string, string[]> = {
+  storageWave: ['story_storage_day_region'],
+  solarWave: ['story_solar_day_region'],
+  storageColocation: ['story_storage_colocation_month'],
+  registrationLag: ['story_registration_lag_month'],
+  solarLocations: ['story_solar_locations'],
+};
+
 /**
- * @fileoverview Bulk write utilities for story tables
+ * Delete data for a specific export snapshot and specific stories
  */
+export async function deleteStorySnapshot(
+  client: DbClient,
+  exportDate: string,
+  stories?: string[]
+): Promise<void> {
+  let tablesToDelete: string[] = [];
 
-import type { Pool } from 'pg';
+  if (stories && stories.length > 0) {
+    // Collect tables for requested stories
+    for (const story of stories) {
+      const tables = STORY_TABLES[story];
+      if (tables) {
+        tablesToDelete.push(...tables);
+      }
+    }
+    // solarLocations is special - it's a helper for colocation
+    if (stories.includes('storageColocation')) {
+      tablesToDelete.push(...STORY_TABLES['solarLocations']!);
+    }
+  } else {
+    // Delete all known story tables if no list provided
+    tablesToDelete = Object.values(STORY_TABLES).flat();
+  }
 
-/**
- * Delete data for a specific export snapshot
- */
-export async function deleteStorySnapshot(pool: Pool, exportDate: string): Promise<void> {
-  const tables = [
-    'story_storage_day_region',
-    'story_solar_day_region',
-    'story_solar_locations',
-    'story_storage_colocation_month',
-    'story_registration_lag_month',
-    'story_storage_day_netzbetreiber',
-  ];
+  // Remove duplicates
+  tablesToDelete = [...new Set(tablesToDelete)];
 
-  for (const table of tables) {
-    await pool.query(`DELETE FROM ${table} WHERE export_date = $1`, [exportDate]);
+  for (const table of tablesToDelete) {
+    await client.query(`DELETE FROM ${table} WHERE export_date = $1`, [exportDate]);
   }
 }
 
@@ -26,7 +48,7 @@ export async function deleteStorySnapshot(pool: Pool, exportDate: string): Promi
  * Bulk insert rows into a table
  */
 export async function bulkInsert<T extends Record<string, unknown>>(
-  pool: Pool,
+  client: DbClient,
   table: string,
   columns: string[],
   rows: T[],
@@ -57,7 +79,7 @@ export async function bulkInsert<T extends Record<string, unknown>>(
       VALUES ${placeholders.join(', ')}
     `;
 
-    await pool.query(sql, values);
+    await client.query(sql, values);
     inserted += batch.length;
   }
 
@@ -68,7 +90,7 @@ export async function bulkInsert<T extends Record<string, unknown>>(
  * Upsert location core records (for opportunistic population)
  */
 export async function upsertLocationCore(
-  pool: Pool,
+  client: DbClient,
   records: Array<{ location_id: string; ags: string | null; plz: string | null; bundesland_ags: string | null }>
 ): Promise<number> {
   if (records.length === 0) return 0;
@@ -92,6 +114,6 @@ export async function upsertLocationCore(
       bundesland_ags = COALESCE(EXCLUDED.bundesland_ags, location_core.bundesland_ags)
   `;
 
-  const result = await pool.query(sql, values);
+  const result = await client.query(sql, values);
   return result.rowCount ?? 0;
 }

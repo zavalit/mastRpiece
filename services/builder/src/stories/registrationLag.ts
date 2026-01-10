@@ -1,25 +1,18 @@
 /**
- * @fileoverview Registration Lag story builder
+ * @fileoverview Registration Lag story builder with incremental DB writes
  * Computes lag between commissioning and registration dates
  */
 
-import type { Pool } from 'pg';
+import type { DbClient } from '../types.js';
 import type { StoryBuilder, StoryResult, StorageRecord, SolarRecord } from '../types.js';
 import { parseDate, extractBundeslandAgs, getMonthStart } from '../io/xmlParser.js';
-import { bulkInsert } from '../db/write.js';
-
-interface LagBucket {
-  lags: number[];
-}
-
-/**
- * Compute percentile from sorted array
- */
-function percentile(sorted: number[], p: number): number {
-  if (sorted.length === 0) return 0;
-  const idx = Math.ceil((p / 100) * sorted.length) - 1;
-  return sorted[Math.max(0, Math.min(idx, sorted.length - 1))] ?? 0;
-}
+import { getPool } from '../db/pool.js';
+import { 
+  type Histogram, 
+  createHistogram, 
+  addToHistogram, 
+  histogramPercentile 
+} from '../utils/histogram.js';
 
 /**
  * Compute lag in days between two date strings
@@ -40,97 +33,143 @@ function computeLagDays(
 }
 
 /**
- * Create a RegistrationLag builder for a specific tech type
+ * Create a RegistrationLag builder with incremental DB writes
  */
-export function createRegistrationLagBuilder(
-  tech: 'storage' | 'solar'
-): StoryBuilder<StorageRecord | SolarRecord> {
-  // Aggregates by month+bundesland
-  const buckets = new Map<string, LagBucket>();
+export function createRegistrationLagStory(): StoryBuilder<StorageRecord | SolarRecord> {
+  const storageHistograms = new Map<string, Histogram>();
+  const solarHistograms = new Map<string, Histogram>();
   let processedCount = 0;
+  let exportDate = '';
 
   const makeKey = (month: string, bl: string) => `${month}|${bl}`;
 
-  const filePatterns =
-    tech === 'storage'
-      ? [/^EinheitenStromSpeicher.*\.xml$/i, /^AnlagenStromSpeicher.*\.xml$/i]
-      : [/^EinheitenSolar.*\.xml$/i];
+  function getOrCreateHistogram(histograms: Map<string, Histogram>, key: string): Histogram {
+    let histogram = histograms.get(key);
+    if (!histogram) {
+      histogram = createHistogram();
+      histograms.set(key, histogram);
+    }
+    return histogram;
+  }
+
+  function processRecord(
+    record: StorageRecord | SolarRecord,
+    histograms: Map<string, Histogram>
+  ): void {
+    const day = parseDate(record.Inbetriebnahmedatum);
+    if (!day) return;
+
+    const month = getMonthStart(day);
+    if (!month) return;
+
+    const bundesland_ags = extractBundeslandAgs(record.Gemeindeschluessel) ?? '99';
+    const registrationDate = parseDate(record.Registrierungsdatum);
+    const lag = computeLagDays(day, registrationDate);
+
+    if (lag !== null) {
+      const key = makeKey(month, bundesland_ags);
+      const histogram = getOrCreateHistogram(histograms, key);
+      addToHistogram(histogram, lag);
+    }
+
+    processedCount++;
+  }
+
+  async function flushHistograms(tech: string, histograms: Map<string, Histogram>): Promise<void> {
+    if (histograms.size === 0 || !exportDate) return;
+
+    const pool = getPool();
+    const values: any[] = [];
+    const placeholders: string[] = [];
+    let paramIndex = 1;
+
+    for (const [key, histogram] of histograms.entries()) {
+      const [month, bundesland_ags] = key.split('|');
+      const p50 = histogramPercentile(histogram, 50);
+      const p90 = histogramPercentile(histogram, 90);
+
+      placeholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4}, $${paramIndex + 5}, $${paramIndex + 6})`);
+      values.push(exportDate, month, tech, bundesland_ags, histogram.total, p50, p90);
+      paramIndex += 7;
+    }
+
+    await pool.query(`
+      INSERT INTO story_registration_lag_staging 
+        (export_date, month, tech, bundesland_ags, count_units, p50_lag_days, p90_lag_days)
+      VALUES ${placeholders.join(', ')}
+      ON CONFLICT (export_date, month, tech, bundesland_ags) 
+      DO UPDATE SET
+        count_units = story_registration_lag_staging.count_units + EXCLUDED.count_units,
+        p50_lag_days = (story_registration_lag_staging.p50_lag_days + EXCLUDED.p50_lag_days) / 2,
+        p90_lag_days = (story_registration_lag_staging.p90_lag_days + EXCLUDED.p90_lag_days) / 2
+    `, values);
+
+    histograms.clear();
+  }
 
   return {
-    name: `registrationLag_${tech}`,
-    filePatterns,
+    name: 'registrationLag',
 
-    onRecord(record: StorageRecord | SolarRecord): void {
-      const day = parseDate(record.Inbetriebnahmedatum);
-      if (!day) return;
-
-      const month = getMonthStart(day);
-      if (!month) return;
-
-      const bundesland_ags = extractBundeslandAgs(record.Gemeindeschluessel) ?? '99';
-
-      const registrationDate = parseDate(record.Registrierungsdatum);
-      const lag = computeLagDays(day, registrationDate);
-
-      if (lag !== null) {
-        const key = makeKey(month, bundesland_ags);
-        const existing = buckets.get(key);
-
-        if (existing) {
-          existing.lags.push(lag);
-        } else {
-          buckets.set(key, { lags: [lag] });
-        }
-      }
-
-      processedCount++;
+    getInterestedElement(filename: string): string | null {
+      if (/^EinheitenStromSpeicher.*\.xml$/i.test(filename)) return 'EinheitStromSpeicher';
+      if (/^AnlagenStromSpeicher.*\.xml$/i.test(filename)) return 'AnlageStromSpeicher';
+      if (/^EinheitenSolar.*\.xml$/i.test(filename)) return 'EinheitSolar';
+      return null;
     },
 
-    async finalizeAndWrite(pool: Pool, exportDate: string): Promise<StoryResult> {
+    onRecord(record: any): void {
+      const mastrNr = record.EinheitMastrNummer || '';
+      if (/^SEE/i.test(mastrNr)) {
+        processRecord(record, solarHistograms);
+      } else {
+        processRecord(record, storageHistograms);
+      }
+    },
+
+    async onFileComplete(): Promise<void> {
+      await flushHistograms('storage', storageHistograms);
+      await flushHistograms('solar', solarHistograms);
+    },
+
+    async prepareWrite(client: DbClient, exportDate_: string): Promise<void> {
+      exportDate = exportDate_;
+      
+      // Clean staging table
+      await client.query('DELETE FROM story_registration_lag_staging WHERE export_date = $1', [exportDate]);
+    },
+
+    async finalizeAndWrite(client: DbClient, exportDate_: string): Promise<StoryResult> {
       const startTime = Date.now();
+      exportDate = exportDate_;
 
-      const rows = Array.from(buckets.entries()).map(([key, value]) => {
-        const [month, bundesland_ags] = key.split('|');
-        
-        // Sort lags for percentile calculation
-        const sorted = [...value.lags].sort((a, b) => a - b);
-        
-        return {
-          export_date: exportDate,
-          month,
-          tech,
-          bundesland_ags,
-          count_units: value.lags.length,
-          p50_lag_days: percentile(sorted, 50),
-          p90_lag_days: percentile(sorted, 90),
-        };
-      });
+      // Flush any remaining histograms
+      await flushHistograms('storage', storageHistograms);
+      await flushHistograms('solar', solarHistograms);
 
-      const inserted = await bulkInsert(
-        pool,
-        'story_registration_lag_month',
-        [
-          'export_date',
-          'month',
-          'tech',
-          'bundesland_ags',
-          'count_units',
-          'p50_lag_days',
-          'p90_lag_days',
-        ],
-        rows
-      );
+      // Copy from staging to final table
+      const result = await client.query(`
+        INSERT INTO story_registration_lag_month 
+          (export_date, month, tech, bundesland_ags, count_units, p50_lag_days, p90_lag_days)
+        SELECT export_date, month, tech, bundesland_ags, count_units, p50_lag_days, p90_lag_days
+        FROM story_registration_lag_staging
+        WHERE export_date = $1
+      `, [exportDate]);
+
+      // Cleanup
+      await client.query('DELETE FROM story_registration_lag_staging WHERE export_date = $1', [exportDate]);
 
       return {
         recordsProcessed: processedCount,
-        rowsInserted: inserted,
+        rowsInserted: result.rowCount ?? 0,
         duration_ms: Date.now() - startTime,
       };
     },
 
     reset(): void {
-      buckets.clear();
+      storageHistograms.clear();
+      solarHistograms.clear();
       processedCount = 0;
+      exportDate = '';
     },
   };
 }
