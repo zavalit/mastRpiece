@@ -7,21 +7,26 @@ import { loadStoryDefinitions, type StoryBuilder, type StoryDefinition } from '@
 /**
  * Create story builders based on the requested story names
  */
-export async function createStoryBuilders(storyNames: string[], exportDate: string): Promise<StoryBuilder[]> {
-  const definitions: StoryDefinition[] = await loadStoryDefinitions();
+export async function createStoryBuilders(storyNames: string[], exportDate: string): Promise<{
+  builders: StoryBuilder[];
+  definitions: StoryDefinition[];
+}> {
+  const allDefinitions: StoryDefinition[] = await loadStoryDefinitions();
   const builders: StoryBuilder[] = [];
+  const selectedDefinitions: StoryDefinition[] = [];
 
   for (const name of storyNames) {
-    const definition = definitions.find((d: StoryDefinition) => d.name === name);
+    const definition = allDefinitions.find((d: StoryDefinition) => d.name === name);
     if (definition) {
       const builder = definition.createBuilder(exportDate);
       builders.push(builder);
+      selectedDefinitions.push(definition);
     } else {
       console.warn(`Unknown story: ${name}`);
     }
   }
 
-  return builders;
+  return { builders, definitions: selectedDefinitions };
 }
 
 /**

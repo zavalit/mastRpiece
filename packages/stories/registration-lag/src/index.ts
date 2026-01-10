@@ -12,6 +12,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export const registrationLagStory: StoryDefinition = {
   name: 'registrationLag',
+  tables: ['story_registration_lag_month'],
   createBuilder: createRegistrationLagBuilder,
   registerRoutes,
   migrationsDir: join(__dirname, '../migrations')

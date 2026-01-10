@@ -20,7 +20,7 @@ dotenvConfig({ path: resolve(process.cwd(), '.env') });
 function parseArgs(): BuilderConfig {
   const args = process.argv.slice(2);
   const config: Partial<BuilderConfig> = {
-    stories: ['storageWave', 'solarWave', 'storageColocation', 'registrationLag'],
+    stories: ['storageWave', 'solarWave', 'registrationLag'],
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -45,7 +45,7 @@ Options:
   --bulkPath     Path to bulk ZIP file (required)
   --exportDate   Export date in YYYY-MM-DD format (required)
   --stories      Comma-separated list of stories to build (default: all)
-                 Available: storageWave, solarWave, storageColocation, registrationLag
+                 Available: storageWave, solarWave, registrationLag
 
 Examples:
   builder --bulkPath ./demo-data/bulk.zip --exportDate 2026-01-06

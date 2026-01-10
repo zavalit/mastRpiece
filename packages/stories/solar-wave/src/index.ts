@@ -12,6 +12,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export const solarWaveStory: StoryDefinition = {
   name: 'solarWave',
+  tables: ['story_solar_day_region'],
   createBuilder: createSolarWaveBuilder,
   registerRoutes,
   migrationsDir: join(__dirname, '../migrations')

@@ -1,13 +1,5 @@
-import type { Pool, PoolClient } from 'pg';
 import type { DbClient } from '../types.js';
-
-const STORY_TABLES: Record<string, string[]> = {
-  storageWave: ['story_storage_day_region'],
-  solarWave: ['story_solar_day_region'],
-  storageColocation: ['story_storage_colocation_month'],
-  registrationLag: ['story_registration_lag_month'],
-  solarLocations: ['story_solar_locations'],
-};
+import type { StoryDefinition } from '@mastrpiece/shared';
 
 /**
  * Delete data for a specific export snapshot and specific stories
@@ -15,29 +7,15 @@ const STORY_TABLES: Record<string, string[]> = {
 export async function deleteStorySnapshot(
   client: DbClient,
   exportDate: string,
-  stories?: string[]
+  storyDefinitions: StoryDefinition[]
 ): Promise<void> {
-  let tablesToDelete: string[] = [];
+  const tablesToDelete = new Set<string>();
 
-  if (stories && stories.length > 0) {
-    // Collect tables for requested stories
-    for (const story of stories) {
-      const tables = STORY_TABLES[story];
-      if (tables) {
-        tablesToDelete.push(...tables);
-      }
+  for (const story of storyDefinitions) {
+    for (const table of story.tables) {
+      tablesToDelete.add(table);
     }
-    // solarLocations is special - it's a helper for colocation
-    if (stories.includes('storageColocation')) {
-      tablesToDelete.push(...STORY_TABLES['solarLocations']!);
-    }
-  } else {
-    // Delete all known story tables if no list provided
-    tablesToDelete = Object.values(STORY_TABLES).flat();
   }
-
-  // Remove duplicates
-  tablesToDelete = [...new Set(tablesToDelete)];
 
   for (const table of tablesToDelete) {
     await client.query(`DELETE FROM ${table} WHERE export_date = $1`, [exportDate]);

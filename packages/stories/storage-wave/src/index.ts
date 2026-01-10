@@ -12,6 +12,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export const storageWaveStory: StoryDefinition = {
   name: 'storageWave',
+  tables: ['story_storage_day_region'],
   createBuilder: createStorageWaveBuilder,
   registerRoutes,
   migrationsDir: join(__dirname, '../migrations')

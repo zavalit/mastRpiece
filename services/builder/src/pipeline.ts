@@ -59,7 +59,7 @@ export async function runBuild(config: BuilderConfig): Promise<BuildResult> {
 
   try {
     // Step 3: Initialize builders from factory
-    const builders = await createStoryBuilders(config.stories, config.exportDate);
+    const { builders, definitions } = await createStoryBuilders(config.stories, config.exportDate);
     logger.info({ stories: builders.map(b => b.name) }, 'Initialized story builders');
 
     // Step 4: Run onPrepare hooks (clear staging, etc.)
@@ -147,7 +147,7 @@ export async function runBuild(config: BuilderConfig): Promise<BuildResult> {
         { exportDate: config.exportDate, stories: config.stories },
         'Cleaning up existing snapshot data selectively'
       );
-      await deleteStorySnapshot(client, config.exportDate, config.stories);
+      await deleteStorySnapshot(client, config.exportDate, definitions);
 
       // Step 6b: Write story tables
       logger.info('Writing story tables');

@@ -53,6 +53,7 @@ export interface StoryBuilder<TRecord = any> {
  */
 export interface StoryDefinition {
   name: string;
+  tables: string[];
   createBuilder(exportDate: string): StoryBuilder;
   // Dynamic route registration for Fastify
   registerRoutes(app: any): Promise<void>;
