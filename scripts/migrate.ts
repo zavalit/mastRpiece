@@ -6,6 +6,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import pg from 'pg';
 import { config as dotenvConfig } from 'dotenv';
+import { loadStoryDefinitions } from '@mastrpiece/shared';
 
 dotenvConfig({ path: resolve(process.cwd(), '.env') });
 
@@ -20,18 +21,44 @@ interface Migration {
 }
 
 async function getMigrationFiles(): Promise<Migration[]> {
-  const files = await readdir(MIGRATIONS_DIR);
-  const sqlFiles = files
-    .filter((f) => f.endsWith('.sql'))
-    .sort();
-
   const migrations: Migration[] = [];
 
-  for (const filename of sqlFiles) {
-    const version = filename.replace(/\.sql$/, '');
-    const filepath = join(MIGRATIONS_DIR, filename);
-    const sql = await readFile(filepath, 'utf-8');
-    migrations.push({ version, filename, sql });
+  // 1. Core migrations
+  try {
+    const coreFiles = await readdir(MIGRATIONS_DIR);
+    for (const filename of coreFiles.filter((f) => f.endsWith('.sql')).sort()) {
+      const version = filename.replace(/\.sql$/, '');
+      const filepath = join(MIGRATIONS_DIR, filename);
+      const sql = await readFile(filepath, 'utf-8');
+      migrations.push({ version, filename: `core/${filename}`, sql });
+    }
+  } catch (error) {
+    console.warn('No core migrations found');
+  }
+
+  // 2. Story migrations (from story definitions)
+  try {
+    const definitions = await loadStoryDefinitions();
+
+    for (const definition of definitions) {
+      if (!definition.migrationsDir) continue;
+
+      const migrationDir = resolve(process.cwd(), definition.migrationsDir);
+
+      try {
+        const files = await readdir(migrationDir);
+        for (const filename of files.filter((f) => f.endsWith('.sql')).sort()) {
+          const version = `story_${definition.name}_${filename.replace(/\.sql$/, '')}`;
+          const filepath = join(migrationDir, filename);
+          const sql = await readFile(filepath, 'utf-8');
+          migrations.push({ version, filename: `stories/${definition.name}/${filename}`, sql });
+        }
+      } catch (e) {
+        // Skip stories without migrations or directories
+      }
+    }
+  } catch (error) {
+    console.warn('Could not load story definitions or find story migrations');
   }
 
   return migrations;

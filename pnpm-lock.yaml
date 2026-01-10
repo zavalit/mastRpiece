@@ -18,6 +18,9 @@ importers:
         specifier: ^8.11.0
         version: 8.16.3
     devDependencies:
+      '@mastrpiece/shared':
+        specifier: workspace:*
+        version: link:packages/shared
       '@testcontainers/postgresql':
         specifier: ^11.11.0
         version: 11.11.0
@@ -76,11 +79,60 @@ importers:
         specifier: ^5.3.0
         version: 5.9.3
 
+  packages/stories/registration-lag:
+    dependencies:
+      '@mastrpiece/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      fastify:
+        specifier: ^4.0.0
+        version: 4.29.1
+    devDependencies:
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.3
+
+  packages/stories/solar-wave:
+    dependencies:
+      '@mastrpiece/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      fastify:
+        specifier: ^4.0.0
+        version: 4.29.1
+    devDependencies:
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.3
+
+  packages/stories/storage-colocation:
+    dependencies:
+      '@mastrpiece/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      fastify:
+        specifier: ^4.0.0
+        version: 4.29.1
+    devDependencies:
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.3
+
+  packages/stories/storage-wave:
+    dependencies:
+      '@mastrpiece/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      fastify:
+        specifier: ^4.0.0
+        version: 4.29.1
+    devDependencies:
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.3
+
   services/api:
     dependencies:
-      '@energy/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       '@fastify/cors':
         specifier: ^9.0.0
         version: 9.0.1
@@ -90,6 +142,21 @@ importers:
       '@fastify/swagger-ui':
         specifier: ^3.0.0
         version: 3.1.0
+      '@mastrpiece/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@mastrpiece/story-registration-lag':
+        specifier: workspace:*
+        version: link:../../packages/stories/registration-lag
+      '@mastrpiece/story-solar-wave':
+        specifier: workspace:*
+        version: link:../../packages/stories/solar-wave
+      '@mastrpiece/story-storage-colocation':
+        specifier: workspace:*
+        version: link:../../packages/stories/storage-colocation
+      '@mastrpiece/story-storage-wave':
+        specifier: workspace:*
+        version: link:../../packages/stories/storage-wave
       dotenv:
         specifier: ^16.4.0
         version: 16.6.1
@@ -121,9 +188,21 @@ importers:
 
   services/builder:
     dependencies:
-      '@energy/shared':
+      '@mastrpiece/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@mastrpiece/story-registration-lag':
+        specifier: workspace:*
+        version: link:../../packages/stories/registration-lag
+      '@mastrpiece/story-solar-wave':
+        specifier: workspace:*
+        version: link:../../packages/stories/solar-wave
+      '@mastrpiece/story-storage-colocation':
+        specifier: workspace:*
+        version: link:../../packages/stories/storage-colocation
+      '@mastrpiece/story-storage-wave':
+        specifier: workspace:*
+        version: link:../../packages/stories/storage-wave
       dotenv:
         specifier: ^16.4.0
         version: 16.6.1
@@ -161,7 +240,7 @@ importers:
 
   services/fetcher:
     dependencies:
-      '@energy/shared':
+      '@mastrpiece/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       cheerio:

@@ -1,12 +1,18 @@
 /**
- * @fileoverview Storage Wave story builder
- * Aggregates storage units by day + bundesland
+ * @fileoverview Storage Wave story builder logic
  */
 
-import type { DbClient } from '../types.js';
-import type { StoryBuilder, StoryResult, StorageRecord } from '../types.js';
-import { parseNumber, parseDate, extractBundeslandAgs } from '../io/xmlParser.js';
-import { getPool } from '../db/pool.js';
+import type { 
+  DbClient, 
+  StoryBuilder, 
+  StoryResult, 
+  StorageRecord 
+} from '@mastrpiece/shared';
+import { 
+  parseNumber, 
+  parseDate, 
+  extractBundeslandAgs 
+} from '@mastrpiece/shared/utils';
 
 interface AggValue {
   count: number;
@@ -14,9 +20,6 @@ interface AggValue {
   sum_inverter_kw: number;
 }
 
-/**
- * Create a StorageWave builder instance with incremental DB upserts
- */
 export function createStorageWaveBuilder(initialExportDate: string = ''): StoryBuilder<StorageRecord> {
   const aggregates = new Map<string, AggValue>();
   let processedCount = 0;
@@ -24,13 +27,9 @@ export function createStorageWaveBuilder(initialExportDate: string = ''): StoryB
 
   const makeKey = (day: string, bl: string) => `${day}|${bl}`;
 
-  /**
-   * Flush aggregates to staging table using upsert
-   */
-  async function flushToDb(): Promise<void> {
+  async function flushToDb(client: DbClient): Promise<void> {
     if (aggregates.size === 0 || !exportDate) return;
 
-    const pool = getPool();
     const rows = Array.from(aggregates.entries()).sort((a, b) => a[0].localeCompare(b[0]));
     const CHUNK_SIZE = 1000;
 
@@ -47,7 +46,7 @@ export function createStorageWaveBuilder(initialExportDate: string = ''): StoryB
         paramIndex += 6;
       }
 
-      await pool.query(`
+      await client.query(`
         INSERT INTO story_storage_day_region_staging 
           (export_date, day, bundesland_ags, count_units, sum_netto_kw, sum_inverter_kw)
         VALUES ${placeholders.join(', ')}
@@ -98,32 +97,31 @@ export function createStorageWaveBuilder(initialExportDate: string = ''): StoryB
     },
 
     async onPrepare(client: DbClient): Promise<void> {
-      // Clean staging table for this export_date
       await client.query(`
         DELETE FROM story_storage_day_region_staging 
         WHERE export_date = $1
       `, [exportDate]);
     },
 
-    async onFileComplete(): Promise<void> {
-      await flushToDb();
+    async onFileComplete(client: DbClient): Promise<void> {
+      await flushToDb(client);
     },
 
     async finalizeAndWrite(client: DbClient): Promise<StoryResult> {
       const startTime = Date.now();
+      await flushToDb(client);
 
-      // Flush any remaining in-memory aggregates
-      await flushToDb();
-
-      // Copy from staging to final table
       const result = await client.query(`
         INSERT INTO story_storage_day_region (export_date, day, bundesland_ags, count_units, sum_netto_kw, sum_inverter_kw)
         SELECT export_date, day, bundesland_ags, count_units, sum_netto_kw, sum_inverter_kw
         FROM story_storage_day_region_staging
         WHERE export_date = $1
+        ON CONFLICT (export_date, day, bundesland_ags) DO UPDATE SET
+          count_units = EXCLUDED.count_units,
+          sum_netto_kw = EXCLUDED.sum_netto_kw,
+          sum_inverter_kw = EXCLUDED.sum_inverter_kw
       `, [exportDate]);
 
-      // Clean up staging data
       await client.query(`
         DELETE FROM story_storage_day_region_staging 
         WHERE export_date = $1

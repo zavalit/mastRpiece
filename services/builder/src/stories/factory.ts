@@ -1,33 +1,20 @@
 /**
- * @fileoverview Story factory - instantiates story builders based on config
+ * @fileoverview Story factory - dynamic loading of story builders
  */
 
-import type { StoryBuilder } from '../types.js';
-import { createStorageWaveBuilder } from './storageWave.js';
-import { createSolarWaveBuilder } from './solarWave.js';
-import { createStorageColocationStory } from './storageColocation.js';
-import { createRegistrationLagStory } from './registrationLag.js';
-
-/**
- * Map of story names to their factory functions
- */
-const STORY_FACTORIES: Record<string, (exportDate: string) => StoryBuilder> = {
-  storageWave: createStorageWaveBuilder,
-  solarWave: createSolarWaveBuilder,
-  storageColocation: createStorageColocationStory,
-  registrationLag: createRegistrationLagStory,
-};
+import { loadStoryDefinitions, type StoryBuilder, type StoryDefinition } from '@mastrpiece/shared';
 
 /**
  * Create story builders based on the requested story names
  */
-export function createStoryBuilders(storyNames: string[], exportDate: string): StoryBuilder[] {
+export async function createStoryBuilders(storyNames: string[], exportDate: string): Promise<StoryBuilder[]> {
+  const definitions: StoryDefinition[] = await loadStoryDefinitions();
   const builders: StoryBuilder[] = [];
 
   for (const name of storyNames) {
-    const factory = STORY_FACTORIES[name];
-    if (factory) {
-      const builder = factory(exportDate);
+    const definition = definitions.find((d: StoryDefinition) => d.name === name);
+    if (definition) {
+      const builder = definition.createBuilder(exportDate);
       builders.push(builder);
     } else {
       console.warn(`Unknown story: ${name}`);
@@ -40,6 +27,7 @@ export function createStoryBuilders(storyNames: string[], exportDate: string): S
 /**
  * Get the list of all available story names
  */
-export function getAvailableStories(): string[] {
-  return Object.keys(STORY_FACTORIES);
+export async function getAvailableStories(): Promise<string[]> {
+  const definitions: StoryDefinition[] = await loadStoryDefinitions();
+  return definitions.map((d: StoryDefinition) => d.name);
 }

@@ -1,5 +1,5 @@
 {
-  "name": "energy-unit-stats",
+  "name": "mastrpiece",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -8,7 +8,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "dev": "docker compose up -d && pnpm --filter @energy/api dev",
+    "dev": "docker compose up -d && pnpm --filter @mastrpiece/api dev",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "test:unit": "pnpm -r test:unit",
@@ -22,10 +22,11 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "demo:generate": "tsx scripts/generateDemo.ts",
     "builder:demo": "tsx services/builder/src/cli.ts --bulkPath ./demo-data/bulk.zip --exportDate 2026-01-08",
-    "demo:up": "docker compose up -d && pnpm db:migrate && pnpm demo:generate && pnpm builder:demo && pnpm --filter @energy/api dev",
+    "demo:up": "docker compose up -d && pnpm db:migrate && pnpm demo:generate && pnpm builder:demo && pnpm --filter @mastrpiece/api dev",
     "bulk:schema": "tsx scripts/extract-schema.ts data/artifacts/bulk/datasets/bulk.zip"
   },
   "devDependencies": {
+    "@mastrpiece/shared": "workspace:*",
     "@testcontainers/postgresql": "^11.11.0",
     "@types/archiver": "^6.0.0",
     "@types/node": "^20.11.0",

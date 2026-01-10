@@ -4,7 +4,7 @@
 
 import { mkdir, rename, writeFile, rm } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-import type { DatasetManifest, LatestPointer } from '@energy/shared';
+import type { DatasetManifest, LatestPointer } from '@mastrpiece/shared';
 
 /**
  * Paths configuration for artifact store

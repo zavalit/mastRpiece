@@ -1,18 +1,23 @@
 /**
- * @fileoverview Registration Lag story builder with incremental DB writes
- * Computes lag between commissioning and registration dates
+ * @fileoverview Registration Lag story builder logic
  */
 
-import type { DbClient } from '../types.js';
-import type { StoryBuilder, StoryResult, StorageRecord, SolarRecord } from '../types.js';
-import { parseDate, extractBundeslandAgs, getMonthStart } from '../io/xmlParser.js';
-import { getPool } from '../db/pool.js';
+import type { 
+  DbClient, 
+  StoryBuilder, 
+  StoryResult, 
+  StorageRecord, 
+  SolarRecord 
+} from '@mastrpiece/shared';
 import { 
-  type Histogram, 
-  createHistogram, 
-  addToHistogram, 
-  histogramPercentile 
-} from '../utils/histogram.js';
+  parseDate, 
+  extractBundeslandAgs, 
+  getMonthStart,
+  type Histogram,
+  createHistogram,
+  addToHistogram,
+  histogramPercentile
+} from '@mastrpiece/shared/utils';
 
 /**
  * Compute lag in days between two date strings
@@ -32,10 +37,7 @@ function computeLagDays(
   return Math.round(diffMs / (1000 * 60 * 60 * 24));
 }
 
-/**
- * Create a RegistrationLag builder with incremental DB writes
- */
-export function createRegistrationLagStory(initialExportDate: string = ''): StoryBuilder<StorageRecord | SolarRecord> {
+export function createRegistrationLagBuilder(initialExportDate: string = ''): StoryBuilder<StorageRecord | SolarRecord> {
   const storageHistograms = new Map<string, Histogram>();
   const solarHistograms = new Map<string, Histogram>();
   let processedCount = 0;
@@ -75,10 +77,9 @@ export function createRegistrationLagStory(initialExportDate: string = ''): Stor
     processedCount++;
   }
 
-  async function flushHistograms(tech: string, histograms: Map<string, Histogram>): Promise<void> {
+  async function flushHistograms(client: DbClient, tech: string, histograms: Map<string, Histogram>): Promise<void> {
     if (histograms.size === 0 || !exportDate) return;
 
-    const pool = getPool();
     const entries = Array.from(histograms.entries()).sort((a, b) => a[0].localeCompare(b[0]));
     const CHUNK_SIZE = 1000;
 
@@ -98,7 +99,7 @@ export function createRegistrationLagStory(initialExportDate: string = ''): Stor
         paramIndex += 7;
       }
 
-      await pool.query(`
+      await client.query(`
         INSERT INTO story_registration_lag_staging 
           (export_date, month, tech, bundesland_ags, count_units, p50_lag_days, p90_lag_days)
         VALUES ${placeholders.join(', ')}
@@ -132,33 +133,32 @@ export function createRegistrationLagStory(initialExportDate: string = ''): Stor
       }
     },
 
-    async onFileComplete(): Promise<void> {
-      await flushHistograms('storage', storageHistograms);
-      await flushHistograms('solar', solarHistograms);
+    async onFileComplete(client: DbClient): Promise<void> {
+      await flushHistograms(client, 'storage', storageHistograms);
+      await flushHistograms(client, 'solar', solarHistograms);
     },
 
     async onPrepare(client: DbClient): Promise<void> {
-      // Clean staging table
       await client.query('DELETE FROM story_registration_lag_staging WHERE export_date = $1', [exportDate]);
     },
 
     async finalizeAndWrite(client: DbClient): Promise<StoryResult> {
       const startTime = Date.now();
+      await flushHistograms(client, 'storage', storageHistograms);
+      await flushHistograms(client, 'solar', solarHistograms);
 
-      // Flush any remaining histograms
-      await flushHistograms('storage', storageHistograms);
-      await flushHistograms('solar', solarHistograms);
-
-      // Copy from staging to final table
       const result = await client.query(`
         INSERT INTO story_registration_lag_month 
           (export_date, month, tech, bundesland_ags, count_units, p50_lag_days, p90_lag_days)
         SELECT export_date, month, tech, bundesland_ags, count_units, p50_lag_days, p90_lag_days
         FROM story_registration_lag_staging
         WHERE export_date = $1
+        ON CONFLICT (export_date, month, tech, bundesland_ags) DO UPDATE SET
+          count_units = EXCLUDED.count_units,
+          p50_lag_days = EXCLUDED.p50_lag_days,
+          p90_lag_days = EXCLUDED.p90_lag_days
       `, [exportDate]);
 
-      // Cleanup
       await client.query('DELETE FROM story_registration_lag_staging WHERE export_date = $1', [exportDate]);
 
       return {

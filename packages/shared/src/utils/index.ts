@@ -183,6 +183,24 @@ export function isValidTechType(value: string): value is TechType {
 }
 
 /**
+ * Extract bundesland AGS from Gemeindeschluessel (first 2 digits)
+ */
+export function extractBundeslandAgs(ags: string | undefined | null): string | null {
+  if (!ags || ags.length < 2) return null;
+  return ags.substring(0, 2);
+}
+
+/**
+ * Get first day of month from a date string (YYYY-MM-DD)
+ */
+export function getMonthStart(dateStr: string | null | undefined): string | null {
+  if (!dateStr) return null;
+  const parts = dateStr.split('-');
+  if (parts.length < 2) return null;
+  return `${parts[0]}-${parts[1]}-01`;
+}
+
+/**
  * German Bundesland codes
  */
 export const BUNDESLAND_CODES: Record<string, string> = {
@@ -203,3 +221,5 @@ export const BUNDESLAND_CODES: Record<string, string> = {
   '15': 'Sachsen-Anhalt',
   '16': 'Thüringen',
 } as const;
+
+export * from './histogram.js';

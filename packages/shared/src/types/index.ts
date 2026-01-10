@@ -20,6 +20,47 @@ export const VALID_TECH_TYPES: readonly TechType[] = [
 ] as const;
 
 /**
+ * Shared interface for DB operations
+ */
+export interface DbClient {
+  query: <T = any>(text: string, params?: any[]) => Promise<{ rows: T[]; rowCount: number | null }>;
+}
+
+/**
+ * Result for a single story build
+ */
+export interface StoryResult {
+  recordsProcessed: number;
+  rowsInserted: number;
+  duration_ms: number;
+}
+
+/**
+ * Story builder interface
+ */
+export interface StoryBuilder<TRecord = any> {
+  readonly name: string;
+  getInterestedElement(filename: string): string | null;
+  onRecord(record: TRecord): void | Promise<void>;
+  onFileComplete?(client: DbClient, filename: string, recordCount: number): Promise<void>;
+  finalizeAndWrite(client: DbClient, bulkPath: string): Promise<StoryResult>;
+  reset(): void;
+  onPrepare?(client: DbClient, bulkPath: string): Promise<void>;
+}
+
+/**
+ * Story definition to be exported by each story package
+ */
+export interface StoryDefinition {
+  name: string;
+  createBuilder(exportDate: string): StoryBuilder;
+  // Dynamic route registration for Fastify
+  registerRoutes(app: any): Promise<void>;
+  // Path to migrations directory relative to package root
+  migrationsDir?: string;
+}
+
+/**
  * Canonical representation of an energy unit
  */
 export interface Unit {
@@ -136,6 +177,41 @@ export interface MetaResponse {
     total_units: number;
   };
   generated_at: string;
+}
+
+/**
+ * XML record types from MaStR
+ */
+export interface StorageRecord {
+  [key: string]: string | undefined;
+  EinheitMastrNummer: string;
+  LokationMaStRNummer?: string;
+  Inbetriebnahmedatum?: string;
+  Registrierungsdatum?: string;
+  Gemeindeschluessel?: string;
+  Postleitzahl?: string;
+  Nettonennleistung?: string;
+  ZugeordnenteWirkleistungWechselrichter?: string;
+}
+
+export interface SolarRecord {
+  [key: string]: string | undefined;
+  EinheitMastrNummer: string;
+  LokationMaStRNummer?: string;
+  Inbetriebnahmedatum?: string;
+  Registrierungsdatum?: string;
+  Gemeindeschluessel?: string;
+  Postleitzahl?: string;
+  Nettonennleistung?: string;
+}
+
+export interface NetzanschlusspunktRecord {
+  [key: string]: string | undefined;
+  NetzanschlusspunktMaStRNummer: string;
+  LokationMaStRNummer?: string;
+  NetzbetreiberMaStRNummer?: string;
+  NochInPlanung?: string;
+  LetzteAenderung?: string;
 }
 
 /**

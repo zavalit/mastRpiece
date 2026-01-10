@@ -54,7 +54,7 @@ docker compose up -d   # Start PostgreSQL & Redis
 pnpm db:migrate        # Run database migrations
 pnpm demo:generate     # Create demo-data/bulk.zip
 pnpm builder:demo      # Build story tables from demo data
-pnpm --filter @energy/api dev  # Start API
+pnpm --filter @mastrpiece/api dev  # Start API
 ```
 
 **One-Command Demo:**
@@ -90,7 +90,7 @@ Downloads bulk ZIP files from the MaStR portal and publishes them to the artifac
 
 ```bash
 # Run fetcher with local storage
-pnpm --filter @energy/fetcher fetch-data fetch-bulk --artifactRoot ./data/artifacts
+pnpm --filter @mastrpiece/fetcher fetch-data fetch-bulk --artifactRoot ./data/artifacts
 
 # Run fetcher for a specific portal URL (optional)
 npx tsx services/fetcher/src/cli.ts fetch-bulk \

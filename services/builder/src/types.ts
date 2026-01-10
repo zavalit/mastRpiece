@@ -41,40 +41,6 @@ export interface StoryResult {
 }
 
 /**
- * Story builder interface
- */
-export interface StoryBuilder<TRecord = any> {
-  /** Name of the story (for logging) */
-  readonly name: string;
-  
-  /** 
-   * Return the XML element name to parse if interested in this file, 
-   * or null to skip.
-   */
-  getInterestedElement(filename: string): string | null;
-  
-  /** Process a single record from XML (can be async for on-demand flushes) */
-  onRecord(record: TRecord): void | Promise<void>;
-  
-  /** 
-   * Optional: Called after each file completes processing.
-   * Allows builders to incrementally flush data to prevent memory buildup.
-   */
-  onFileComplete?(filename: string, recordCount: number): Promise<void>;
-  
-  /** Finalize and write aggregated data to DB */
-  finalizeAndWrite(client: DbClient, bulkPath: string): Promise<StoryResult>;
-  
-  /** Reset internal state for a new run */
-  reset(): void;
-
-  /** 
-   * Optional: Perform pre-write tasks (e.g., helper tables, second-pass processing, cleaning staging) 
-   */
-  onPrepare?(client: DbClient, bulkPath: string): Promise<void>;
-}
-
-/**
  * XML record types
  */
 export interface StorageRecord {

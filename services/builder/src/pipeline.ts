@@ -16,7 +16,8 @@ import { streamZipEntries, computeFileHash } from './io/zipReader.js';
 import { parseXmlWithCallback } from './io/xmlParser.js';
 import { createStoryBuilders } from './stories/factory.js';
 import logger from './logger.js';
-import type { BuilderConfig, BuildResult, StoryBuilder } from './types.js';
+import type { BuilderConfig, BuildResult } from './types.js';
+import type { StoryBuilder } from '@mastrpiece/shared';
 
 const PROGRESS_INTERVAL = 50000; // Log progress every N records
 
@@ -58,7 +59,7 @@ export async function runBuild(config: BuilderConfig): Promise<BuildResult> {
 
   try {
     // Step 3: Initialize builders from factory
-    const builders = createStoryBuilders(config.stories, config.exportDate);
+    const builders = await createStoryBuilders(config.stories, config.exportDate);
     logger.info({ stories: builders.map(b => b.name) }, 'Initialized story builders');
 
     // Step 4: Run onPrepare hooks (clear staging, etc.)
@@ -132,7 +133,7 @@ export async function runBuild(config: BuilderConfig): Promise<BuildResult> {
       // Call onFileComplete hook if implemented
       for (const builder of targetBuilders) {
         if (builder.onFileComplete) {
-          await builder.onFileComplete(filename, recordCount);
+          await builder.onFileComplete(pool, filename, recordCount);
         }
       }
     }

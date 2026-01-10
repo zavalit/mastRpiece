@@ -1,21 +1,24 @@
 /**
- * @fileoverview Solar Wave story builder
- * Aggregates solar units by day + bundesland
+ * @fileoverview Solar Wave story builder logic
  */
 
-import type { DbClient } from '../types.js';
-import type { StoryBuilder, StoryResult, SolarRecord } from '../types.js';
-import { parseNumber, parseDate, extractBundeslandAgs } from '../io/xmlParser.js';
-import { getPool } from '../db/pool.js';
+import type { 
+  DbClient, 
+  StoryBuilder, 
+  StoryResult, 
+  SolarRecord 
+} from '@mastrpiece/shared';
+import { 
+  parseNumber, 
+  parseDate, 
+  extractBundeslandAgs 
+} from '@mastrpiece/shared/utils';
 
 interface AggValue {
   count: number;
   sum_netto_kw: number;
 }
 
-/**
- * Create a SolarWave builder instance with incremental DB upserts
- */
 export function createSolarWaveBuilder(initialExportDate: string = ''): StoryBuilder<SolarRecord> {
   const aggregates = new Map<string, AggValue>();
   let processedCount = 0;
@@ -23,13 +26,9 @@ export function createSolarWaveBuilder(initialExportDate: string = ''): StoryBui
 
   const makeKey = (day: string, bl: string) => `${day}|${bl}`;
 
-  /**
-   * Flush aggregates to staging table using upsert
-   */
-  async function flushToDb(): Promise<void> {
+  async function flushToDb(client: DbClient): Promise<void> {
     if (aggregates.size === 0 || !exportDate) return;
 
-    const pool = getPool();
     const rows = Array.from(aggregates.entries()).sort((a, b) => a[0].localeCompare(b[0]));
     const CHUNK_SIZE = 1000;
 
@@ -46,7 +45,7 @@ export function createSolarWaveBuilder(initialExportDate: string = ''): StoryBui
         paramIndex += 5;
       }
 
-      await pool.query(`
+      await client.query(`
         INSERT INTO story_solar_day_region_staging 
           (export_date, day, bundesland_ags, count_units, sum_netto_kw)
         VALUES ${placeholders.join(', ')}
@@ -92,32 +91,30 @@ export function createSolarWaveBuilder(initialExportDate: string = ''): StoryBui
     },
 
     async onPrepare(client: DbClient): Promise<void> {
-      // Clean staging table for this export_date
       await client.query(`
         DELETE FROM story_solar_day_region_staging 
         WHERE export_date = $1
       `, [exportDate]);
     },
 
-    async onFileComplete(): Promise<void> {
-      await flushToDb();
+    async onFileComplete(client: DbClient): Promise<void> {
+      await flushToDb(client);
     },
 
     async finalizeAndWrite(client: DbClient): Promise<StoryResult> {
       const startTime = Date.now();
+      await flushToDb(client);
 
-      // Flush any remaining in-memory aggregates
-      await flushToDb();
-
-      // Copy from staging to final table
       const result = await client.query(`
         INSERT INTO story_solar_day_region (export_date, day, bundesland_ags, count_units, sum_netto_kw)
         SELECT export_date, day, bundesland_ags, count_units, sum_netto_kw
         FROM story_solar_day_region_staging
         WHERE export_date = $1
+        ON CONFLICT (export_date, day, bundesland_ags) DO UPDATE SET
+          count_units = EXCLUDED.count_units,
+          sum_netto_kw = EXCLUDED.sum_netto_kw
       `, [exportDate]);
 
-      // Clean up staging data
       await client.query(`
         DELETE FROM story_solar_day_region_staging 
         WHERE export_date = $1

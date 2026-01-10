@@ -1,28 +1,31 @@
 /**
- * @fileoverview Storage Colocation story builder with incremental DB writes
- * Uses staging tables for both Solar and Storage units to compute colocation via SQL joins.
+ * @fileoverview Storage Colocation story builder logic
  */
 
-import type { DbClient } from '../types.js';
-import type { StoryBuilder, StoryResult, SolarRecord, StorageRecord } from '../types.js';
-import { parseDate, extractBundeslandAgs, getMonthStart } from '../io/xmlParser.js';
-import { getPool } from '../db/pool.js';
+import type { 
+  DbClient, 
+  StoryBuilder, 
+  StoryResult, 
+  SolarRecord, 
+  StorageRecord 
+} from '@mastrpiece/shared';
+import { 
+  parseDate, 
+  extractBundeslandAgs, 
+  getMonthStart 
+} from '@mastrpiece/shared/utils';
 
-/**
- * Story for tracking storage units colocated with solar units
- */
-export function createStorageColocationStory(initialExportDate: string = ''): StoryBuilder<SolarRecord | StorageRecord> {
+export function createStorageColocationBuilder(initialExportDate: string = ''): StoryBuilder<SolarRecord | StorageRecord> {
   const solarLocations = new Map<string, string>(); 
   const storageUnits = new Map<string, { month: string; bl: string }>();
   
   let processedCount = 0;
   let exportDate = initialExportDate;
-  const FLUSH_THRESHOLD = 10000;
+  const FLUSH_THRESHOLD = 5000;
 
-  async function flushSolarLocations(): Promise<void> {
+  async function flushSolarLocations(client: DbClient): Promise<void> {
     if (solarLocations.size === 0 || !exportDate) return;
 
-    const pool = getPool();
     const entries = Array.from(solarLocations.entries()).sort((a, b) => a[0].localeCompare(b[0]));
     const CHUNK_SIZE = 1000;
 
@@ -38,7 +41,7 @@ export function createStorageColocationStory(initialExportDate: string = ''): St
         paramIndex += 3;
       }
 
-      await pool.query(`
+      await client.query(`
         INSERT INTO story_solar_locations_staging (export_date, location_id, bundesland_ags)
         VALUES ${placeholders.join(', ')}
         ON CONFLICT (export_date, location_id) DO NOTHING
@@ -48,10 +51,9 @@ export function createStorageColocationStory(initialExportDate: string = ''): St
     solarLocations.clear();
   }
 
-  async function flushStorageUnits(): Promise<void> {
+  async function flushStorageUnits(client: DbClient): Promise<void> {
     if (storageUnits.size === 0 || !exportDate) return;
 
-    const pool = getPool();
     const entries = Array.from(storageUnits.entries()).sort((a, b) => a[0].localeCompare(b[0]));
     const CHUNK_SIZE = 1000;
 
@@ -67,7 +69,7 @@ export function createStorageColocationStory(initialExportDate: string = ''): St
         paramIndex += 4;
       }
 
-      await pool.query(`
+      await client.query(`
         INSERT INTO story_storage_units_staging (export_date, location_id, month, bundesland_ags)
         VALUES ${placeholders.join(', ')}
         ON CONFLICT (export_date, location_id) DO NOTHING
@@ -96,9 +98,6 @@ export function createStorageColocationStory(initialExportDate: string = ''): St
         // Solar unit
         const bl = extractBundeslandAgs(record.Gemeindeschluessel) || '99';
         solarLocations.set(locationId, bl);
-        if (solarLocations.size >= FLUSH_THRESHOLD) {
-          await flushSolarLocations();
-        }
       } else if (/^SSE/i.test(mastrNr)) {
         // Storage unit
         const day = parseDate(record.Inbetriebnahmedatum);
@@ -108,32 +107,27 @@ export function createStorageColocationStory(initialExportDate: string = ''): St
         
         const bl = extractBundeslandAgs(record.Gemeindeschluessel) || '99';
         storageUnits.set(locationId, { month, bl });
-        if (storageUnits.size >= FLUSH_THRESHOLD) {
-          await flushStorageUnits();
-        }
         processedCount++;
       }
     },
 
-    async onFileComplete(): Promise<void> {
-      await flushSolarLocations();
-      await flushStorageUnits();
+    async onFileComplete(client: DbClient): Promise<void> {
+      await flushSolarLocations(client);
+      await flushStorageUnits(client);
     },
 
     async onPrepare(client: DbClient): Promise<void> {
-      // Clean staging tables
       await client.query('DELETE FROM story_solar_locations_staging WHERE export_date = $1', [exportDate]);
       await client.query('DELETE FROM story_storage_units_staging WHERE export_date = $1', [exportDate]);
       await client.query('DELETE FROM story_storage_colocation_staging WHERE export_date = $1', [exportDate]);
-
-      // Note: All records were handled during Pass 1 via onRecord
     },
 
     async finalizeAndWrite(client: DbClient): Promise<StoryResult> {
       const startTime = Date.now();
+      await flushSolarLocations(client);
+      await flushStorageUnits(client);
 
-      // Aggregate storage units and check colocation via SQL JOIN
-      // JOIN with sl ensures we only count storage units whose LOCATION has at least one solar unit
+      // Aggregate via SQL JOIN
       await client.query(`
         INSERT INTO story_storage_colocation_staging (export_date, month, bundesland_ags, storage_units, colocated_units)
         SELECT 
@@ -150,7 +144,6 @@ export function createStorageColocationStory(initialExportDate: string = ''): St
         GROUP BY su.export_date, su.month, su.bundesland_ags
       `, [exportDate]);
 
-      // Copy to final table with rate computation
       const result = await client.query(`
         INSERT INTO story_storage_colocation_month 
           (export_date, month, bundesland_ags, storage_units, colocated_units, colocated_rate)
@@ -172,7 +165,7 @@ export function createStorageColocationStory(initialExportDate: string = ''): St
           colocated_rate = EXCLUDED.colocated_rate
       `, [exportDate]);
 
-      // Optional: Copy solar locations to permanent table if needed for other features
+      // Copy solar locations to permanent table
       await client.query(`
         INSERT INTO story_solar_locations (export_date, location_id, bundesland_ags)
         SELECT export_date, location_id, bundesland_ags
@@ -181,7 +174,7 @@ export function createStorageColocationStory(initialExportDate: string = ''): St
         ON CONFLICT (export_date, location_id) DO NOTHING
       `, [exportDate]);
 
-      // Cleanup staging
+      // Cleanup
       await client.query('DELETE FROM story_solar_locations_staging WHERE export_date = $1', [exportDate]);
       await client.query('DELETE FROM story_storage_units_staging WHERE export_date = $1', [exportDate]);
       await client.query('DELETE FROM story_storage_colocation_staging WHERE export_date = $1', [exportDate]);

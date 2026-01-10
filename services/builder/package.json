@@ -1,5 +1,5 @@
 {
-  "name": "@energy/builder",
+  "name": "@mastrpiece/builder",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,11 @@
     "dev": "NODE_OPTIONS='--max-old-space-size=8192' tsx src/cli.ts"
   },
   "dependencies": {
-    "@energy/shared": "workspace:*",
+    "@mastrpiece/shared": "workspace:*",
+    "@mastrpiece/story-storage-wave": "workspace:*",
+    "@mastrpiece/story-solar-wave": "workspace:*",
+    "@mastrpiece/story-storage-colocation": "workspace:*",
+    "@mastrpiece/story-registration-lag": "workspace:*",
     "dotenv": "^16.4.0",
     "iconv-lite": "^0.6.3",
     "pg": "^8.11.0",

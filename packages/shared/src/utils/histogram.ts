@@ -1,11 +1,9 @@
 /**
  * @fileoverview Histogram-based percentile calculation
- * Memory-efficient alternative to storing raw values
  */
 
 /**
  * Histogram for memory-efficient percentile calculation
- * Stores count per value instead of raw values
  */
 export interface Histogram {
   counts: Map<number, number>;  // value -> count
@@ -30,16 +28,11 @@ export function addToHistogram(histogram: Histogram, value: number): void {
 
 /**
  * Compute percentile from a histogram
- * @param histogram The histogram to compute from
- * @param p Percentile (0-100)
- * @returns The value at the given percentile
  */
 export function histogramPercentile(histogram: Histogram, p: number): number {
   if (histogram.total === 0) return 0;
   
   const targetIdx = Math.ceil((p / 100) * histogram.total);
-  
-  // Get sorted values
   const sortedValues = Array.from(histogram.counts.keys()).sort((a, b) => a - b);
   
   let cumulative = 0;
@@ -50,7 +43,6 @@ export function histogramPercentile(histogram: Histogram, p: number): number {
     }
   }
   
-  // Return last value if we somehow didn't find one
   return sortedValues[sortedValues.length - 1] ?? 0;
 }
 

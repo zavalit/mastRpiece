@@ -1,0 +1,8 @@
+{
+  "stories": [
+    "./packages/stories/storage-wave/src/index.ts",
+    "./packages/stories/solar-wave/src/index.ts",
+    "./packages/stories/storage-colocation/src/index.ts",
+    "./packages/stories/registration-lag/src/index.ts"
+  ]
+}

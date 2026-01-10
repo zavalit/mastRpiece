@@ -1,5 +1,5 @@
 {
-  "name": "@energy/api",
+  "name": "@mastrpiece/api",
   "version": "1.0.0",
   "type": "module",
   "main": "./dist/server.js",
@@ -12,7 +12,11 @@
     "test:unit": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@energy/shared": "workspace:*",
+    "@mastrpiece/shared": "workspace:*",
+    "@mastrpiece/story-storage-wave": "workspace:*",
+    "@mastrpiece/story-solar-wave": "workspace:*",
+    "@mastrpiece/story-storage-colocation": "workspace:*",
+    "@mastrpiece/story-registration-lag": "workspace:*",
     "@fastify/cors": "^9.0.0",
     "@fastify/swagger": "^8.14.0",
     "@fastify/swagger-ui": "^3.0.0",

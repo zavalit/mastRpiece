@@ -4,7 +4,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { FetcherConfig } from '../config.js';
-import type { DatasetManifest } from '@energy/shared';
+import type { DatasetManifest } from '@mastrpiece/shared';
 import logger from '../infra/logger.js';
 import {
   initPool,

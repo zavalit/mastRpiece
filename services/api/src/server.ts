@@ -92,6 +92,22 @@ export async function buildApp() {
     return reply.send(spec);
   });
   
+  // Decorate app with DB and helpers for stories
+  app.decorate('db', { query: (text: string, params?: any[]) => initPool().query(text, params) });
+  
+  const getLatestExportDate = async (): Promise<string | null> => {
+    const result = await initPool().query<{ export_date: string }>(
+      `SELECT export_date::text
+       FROM ingest_run
+       WHERE status = 'success'
+       ORDER BY started_at DESC
+       LIMIT 1`
+    );
+    return result.rows[0]?.export_date ?? null;
+  };
+
+  app.decorate('getLatestExportDate', getLatestExportDate);
+
   // Discovery endpoint
   await registerDiscoveryRoutes(app);
 
