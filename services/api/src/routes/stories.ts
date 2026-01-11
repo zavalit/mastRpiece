@@ -3,6 +3,8 @@
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { query } from '../infra/db.js';
 import { withCache } from '../cache/cacheMiddleware.js';
 import { loadStoryDefinitions } from '@mastrpiece/shared';
@@ -57,7 +59,12 @@ export async function registerStoryRoutes(app: FastifyInstance): Promise<void> {
   }, withCache(getMetaHandler));
 
   // Load and register independent story routes
-  const definitions = await loadStoryDefinitions();
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const workspaceRoot = resolve(__dirname, '../../../../');
+  const storiesPath = resolve(workspaceRoot, 'stories.json');
+  
+  app.log.info(`Loading stories from: ${storiesPath}`);
+  const definitions = await loadStoryDefinitions(workspaceRoot, 'stories.json');
   for (const definition of definitions) {
     app.log.info(`Registering story routes: ${definition.name}`);
     await definition.registerRoutes(app);

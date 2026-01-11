@@ -43,6 +43,22 @@ export async function buildApp() {
       },
     },
   });
+  
+  // Route collection for discovery
+  const routes = new Set<string>();
+  app.addHook('onRoute', (routeOptions) => {
+    // Only collect GET routes that are not internal (swagger/docs)
+    if (
+      routeOptions.method === 'GET' && 
+      !routeOptions.url.startsWith('/docs') &&
+      !routeOptions.url.startsWith('/.well-known') &&
+      routeOptions.url !== '/openapi.json'
+    ) {
+      routes.add(routeOptions.url);
+    }
+  });
+
+  app.decorate('registeredRoutes', routes);
 
   // Register CORS
   await app.register(cors, {

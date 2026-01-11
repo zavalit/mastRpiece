@@ -61,8 +61,14 @@ export async function registerDiscoveryRoutes(app: FastifyInstance): Promise<voi
               base_url: { type: 'string' },
               openapi_url: { type: 'string' },
               docs_url: { type: 'string' },
-              endpoints: { type: 'object' },
-              caching: { type: 'object' },
+              endpoints: { type: 'object', additionalProperties: true },
+              caching: { 
+                type: 'object',
+                properties: {
+                  default_ttl_seconds: { type: 'number' },
+                  supports_etag: { type: 'boolean' }
+                }
+              },
             },
           },
         },
@@ -74,20 +80,33 @@ export async function registerDiscoveryRoutes(app: FastifyInstance): Promise<voi
         request.headers['x-forwarded-proto'] as string | undefined
       );
 
+      // Get dynamically collected routes
+      const registeredRoutes = app.registeredRoutes;
+      const endpoints: Record<string, string> = {};
+      
+      if (registeredRoutes) {
+        // Sort routes to ensure stable discovery response
+        const sortedRoutes = Array.from(registeredRoutes).sort();
+        
+        for (const route of sortedRoutes) {
+          // Create a key from the route (e.g. /stories/storage/wave -> storage_wave)
+          let key = route.replace(/^\/stories\//, '').replace(/^\//, '').replace(/\//g, '_');
+          if (!key) key = 'root';
+          endpoints[key] = route;
+        }
+      } else {
+        // Fallback for metadata
+        endpoints['health'] = '/health';
+        endpoints['meta'] = '/meta';
+      }
+
       const response: DiscoveryResponse = {
         name: API_NAME,
         version: '1.0.0',
         base_url: baseUrl,
         openapi_url: `${baseUrl}/openapi.json`,
         docs_url: `${baseUrl}/docs`,
-        endpoints: {
-          health: '/health',
-          meta: '/meta',
-          kpi_today: '/kpi/today',
-          kpi_rolling: '/kpi/rolling',
-          rankings_bundesland: '/rankings/bundesland',
-          capabilities: '/capabilities',
-        },
+        endpoints,
         caching: {
           default_ttl_seconds: DEFAULT_CACHE_TTL,
           supports_etag: true,
