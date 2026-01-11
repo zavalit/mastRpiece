@@ -11,17 +11,16 @@ import { config as dotenvConfig } from 'dotenv';
 import { resolve } from 'node:path';
 import { initPool, closePool } from './db/pool.js';
 import { runBuild } from './pipeline.js';
+import { getAvailableStories } from './stories/factory.js';
 import logger from './logger.js';
 import type { BuilderConfig } from './types.js';
 
 // Load environment
 dotenvConfig({ path: resolve(process.cwd(), '.env') });
 
-function parseArgs(): BuilderConfig {
+function parseArgs(): Partial<BuilderConfig> {
   const args = process.argv.slice(2);
-  const config: Partial<BuilderConfig> = {
-    stories: ['storageWave', 'solarWave', 'registrationLag'],
-  };
+  const config: Partial<BuilderConfig> = {};
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -44,8 +43,7 @@ Usage: builder --bulkPath <path> --exportDate <YYYY-MM-DD> [--stories <list>]
 Options:
   --bulkPath     Path to bulk ZIP file (required)
   --exportDate   Export date in YYYY-MM-DD format (required)
-  --stories      Comma-separated list of stories to build (default: all)
-                 Available: storageWave, solarWave, registrationLag
+  --stories      Comma-separated list of stories to build (default: all available)
 
 Examples:
   builder --bulkPath ./demo-data/bulk.zip --exportDate 2026-01-06
@@ -71,11 +69,16 @@ Examples:
     process.exit(1);
   }
 
-  return config as BuilderConfig;
+  return config;
 }
 
 async function main(): Promise<void> {
   const config = parseArgs();
+
+  // Load available stories if not specified
+  if (!config.stories || config.stories.length === 0) {
+    config.stories = await getAvailableStories();
+  }
 
   logger.info({
     bulkPath: config.bulkPath,
@@ -93,7 +96,7 @@ async function main(): Promise<void> {
   });
 
   try {
-    const result = await runBuild(config);
+    const result = await runBuild(config as BuilderConfig);
 
     logger.info({ result }, 'Builder finished successfully');
 
